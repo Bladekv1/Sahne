@@ -151,6 +151,9 @@ body { touch-action: manipulation; }
   position: relative;
   color: var(--text);
 }
+.tabbar a.create {
+  color: var(--text);
+}
 .tabbar .ava { width: 26px; height: 26px; }
 .reel-copy .who { gap: 8px; align-items: center; }
 .reel-copy .follow-btn { width: auto; margin: 0; padding: 4px 10px; font-size: 12px; }
@@ -528,6 +531,8 @@ body { touch-action: manipulation; }
   overflow: hidden;
 }
 .hl img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.hl.add { display: grid; place-items: center; background: var(--field); }
+.hl.add svg { width: 22px; height: 22px; }
 .reel-copy .tag, .reel-copy .mention { color: #fff; }
 .ptabs { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
 .ptabs a { height: 44px; display: grid; place-items: center; color: var(--muted); border-bottom: 1px solid transparent; }
@@ -934,6 +939,102 @@ body { touch-action: manipulation; }
   .rail-person .follow-btn.following { color: var(--text); }
   .rail-foot { margin: 28px 0 0; color: #737373; font-size: 11px; line-height: 1.7; }
 }
+
+.profile-top {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 16px 4px;
+}
+.profile-ava { position: relative; padding-top: 22px; }
+.note-bubble {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 108px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: var(--field);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+}
+.name-line { padding-left: 4px; }
+.name-line span { color: var(--muted); margin-left: 6px; font-size: 13px; }
+.bio .category { display: block; }
+.profile-link { display: inline-block; margin-top: 4px; color: var(--link); }
+.panon, .panon.page {
+  display: block;
+  margin: 4px 16px 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--field);
+}
+.panon strong, .panon span, .panon p { display: block; }
+.panon span, .panon.page p { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.notes { display: flex; gap: 4px; overflow-x: auto; padding: 4px 8px 8px; }
+.note-slot { width: 84px; flex: none; text-align: center; background: none; color: inherit; }
+.note-face { position: relative; display: block; width: 72px; margin: 0 auto; padding-top: 26px; }
+.note-slot .ava { margin: 0 auto; }
+.note-slot b { display: block; margin-top: 6px; font-weight: 400; font-size: 12px; }
+.inbox-tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.inbox-tabs button { position: relative; padding: 10px 0; color: var(--muted); }
+.inbox-tabs button.on { color: var(--text); font-weight: 750; box-shadow: inset 0 -2px 0 var(--text); }
+.inbox-tabs .count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: var(--badge);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.thread > time { margin-left: auto; flex: none; text-transform: none; letter-spacing: 0; }
+.edit-ava { display: flex; align-items: center; gap: 16px; padding: 8px 0 12px; }
+.form-page label { display: block; margin: 14px 0; color: var(--muted); font-size: 13px; }
+.form-page label input, .form-page label textarea { display: block; width: 100%; margin-top: 4px; color: var(--text); }
+.settings-sec { margin: 0; padding: 18px 16px 6px; color: var(--muted); font-size: 14px; font-weight: 700; }
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.set-row .grow { flex: 1; }
+.set-row .val { color: var(--muted); font-size: 13px; }
+.set-row svg { width: 18px; height: 18px; color: var(--muted); }
+.set-row.danger { color: var(--danger); font-weight: 700; }
+.set-row.account { color: var(--link); font-weight: 700; }
+.qr-modal {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 8%;
+  z-index: 2;
+  background: var(--sheet);
+  border-radius: 18px;
+  padding: 6px 8px 18px;
+}
+.qr-top { display: flex; justify-content: space-between; align-items: center; }
+.text-btn { font-weight: 750; padding: 8px 12px; }
+.qr-card { text-align: center; }
+.qr-card svg { width: min(240px, 78%); height: auto; display: block; margin: 4px auto 8px; border-radius: 12px; }
+.qr-actions { display: grid; gap: 8px; padding: 8px 12px 0; }
+.qr-actions button { padding: 12px; border-radius: 10px; background: var(--field); font-weight: 700; }
+#sheet form { display: flex; gap: 8px; padding: 8px 16px 16px; }
+#sheet form input { flex: 1; border: 0; background: var(--field); border-radius: 10px; padding: 10px 12px; font-size: 16px; }
 
 @media (min-width: 1264px) {
   :root { --navw: 244px; }

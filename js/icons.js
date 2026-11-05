@@ -14,6 +14,7 @@ const paths = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   more: '<circle cx="6" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="18" cy="12" r="1" fill="currentColor"/>',
   back: '<path d="M15 5 8 12l7 7"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/>',
   tag: '<path d="M4.5 8.2V4.5H8.2L20 16.3 16.3 20 4.5 8.2Z"/><circle cx="8" cy="8" r=".8" fill="currentColor"/>',

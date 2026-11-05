@@ -2,6 +2,7 @@ import { ME, getUser, suggestions, topics, users } from "./data.js";
 import { esc, formatCount, rich, safeSrc, safeVideo, timeAgo } from "./format.js";
 import { icon } from "./icons.js";
 import { getBlob, putBlob } from "./media.js";
+import { qrMatrix, qrSvg } from "./qr.js";
 import * as store from "./store.js";
 
 const CARDS = ["#1a1a1a", "#ff4d2e", "#1d3557", "#6b2d5b", "#0b3d2e", "#143d59"];
@@ -14,6 +15,9 @@ let cleanupFns = [];
 let currentHash = "";
 let exploreQuery = "";
 let inboxQuery = "";
+let inboxTab = "birincil";
+let qrColor = "#111111";
+const QR_COLORS = ["#111111", "#083d75", "#ed4956", "#0b3d2e", "#6b2d5b"];
 let storyGen = 0;
 let toastTimer = 0;
 function blankDraft() {
@@ -159,22 +163,19 @@ function railHtml() {
 }
 
 function tabBar(r) {
-  const mail = store.unreadTotal();
   const items = [
     ["#/", "akis", "Akış", r.head === "akis" ? "homeFill" : "home"],
-    ["#/kesfet", "kesfet", "Keşfet", "search"],
     ["#/reels", "reels", "Reels", r.head === "reels" ? "reelsFill" : "reels"],
-    ["#/mesaj", "mesaj", "Mesajlar", "send"],
+    ["#/yeni", "yeni", "Oluştur", "plus"],
+    ["#/kesfet", "kesfet", "Keşfet", "search"],
     ["#/profil", "profil", "Profil", ""],
   ];
   return items.map(([href, id, label, glyph]) => {
-    const on = (id === "mesaj" && r.head === "mesaj" && !r.parts[1]) || (id !== "mesaj" && r.head === id) || (id === "akis" && r.head === "akis");
+    const on = r.head === id;
     const current = on ? ' aria-current="page"' : "";
-    const badge = id === "mesaj" && mail ? `<i class="count">${mail}</i>` : "";
-    const graphic = id === "profil"
-      ? avatar(getUser(ME), 24).replace("ava sm", "ava sm")
-      : icon(glyph);
-    return `<a href="${href}" aria-label="${label}"${current}>${graphic}${badge}<span class="sr">${label}</span></a>`;
+    const graphic = id === "profil" ? avatar(getUser(ME), 24) : icon(glyph);
+    const klass = id === "yeni" ? ' class="create"' : "";
+    return `<a href="${href}" aria-label="${label}"${current}${klass}>${graphic}<span class="sr">${label}</span></a>`;
   }).join("");
 }
 
@@ -203,7 +204,7 @@ function paintTop(r) {
   }
   if (r.head === "mesaj" && !r.parts[1]) {
     topbar.classList.add("sub");
-    topbar.innerHTML = `<span></span><h1>Mesajlar</h1><button type="button" class="icon-btn" data-act="new-message" aria-label="Yeni mesaj">${icon("send")}</button>`;
+    topbar.innerHTML = `<span></span><h1>${esc(ME)}</h1><button type="button" class="icon-btn" data-act="new-message" aria-label="Yeni mesaj">${icon("send")}</button>`;
     return;
   }
   if (r.head === "mesaj" && r.parts[1]) {
@@ -222,7 +223,9 @@ function paintTop(r) {
       topbar.innerHTML = subBar("Profil", "#/");
       return;
     }
-    const back = r.head === "u" ? `<a class="icon-btn" href="#/" aria-label="Geri">${icon("back")}</a>` : "<span></span>";
+    const back = r.head === "u"
+      ? `<a class="icon-btn" href="#/" aria-label="Geri">${icon("back")}</a>`
+      : `<a class="icon-btn" href="#/yeni" aria-label="Oluştur">${icon("plus")}</a>`;
     const menu = user.id === ME
       ? `<button type="button" class="icon-btn" data-act="profile-menu" aria-label="Menü">${icon("menu")}</button>`
       : `<button type="button" class="icon-btn" data-act="more" data-user="${esc(user.id)}" aria-label="Diğer">${icon("more")}</button>`;
@@ -233,7 +236,8 @@ function paintTop(r) {
     g: ["Gönderi", "#/"],
     bildirim: ["Bildirimler", "#/"],
     duzenle: ["Profili düzenle", "#/profil"],
-    ayarlar: ["Ayarlar", "#/profil"],
+    ayarlar: ["Ayarlar ve hareketler", "#/profil"],
+    pano: ["Panon", "#/profil"],
     kaydedilenler: ["Kaydedilenler", "#/profil"],
     b: ["Beğenenler", safeId(r.parts[1]) ? `#/g/${safeId(r.parts[1])}` : "#/"],
     takipci: ["Takipçi", profileHref(safeId(r.parts[1]) || ME)],
@@ -404,11 +408,42 @@ function reelsScreen(selected) {
   }).join("")}</div>`;
 }
 
-function inboxScreen() {
+function noteSlot(user, label, extra) {
+  const note = store.noteOf(user);
+  const bubble = `<span class="note-bubble">${esc(note || "Not ekle")}</span>`;
+  return `<${extra.tag} class="note-slot" ${extra.attrs}><span class="note-face">${bubble}${avatar(user, 56)}</span><b>${esc(label)}</b></${extra.tag}>`;
+}
+
+function notesRow() {
+  const me = getUser(ME);
+  const people = users.filter((user) => user.id !== ME && store.noteOf(user));
+  const mine = noteSlot(me, "Notun", { tag: "button", attrs: `type="button" data-act="edit-note"` });
+  const rest = people.map((user) => noteSlot(user, user.name.split(" ")[0], { tag: "a", attrs: `href="${profileHref(user.id)}"` })).join("");
+  return `<div class="notes">${mine}${rest}</div>`;
+}
+
+function inboxRows() {
   const q = inboxQuery.toLocaleLowerCase("tr-TR");
-  const rows = store.inbox().filter((item) => !q || `${item.user.id} ${item.user.name} ${item.last.text}`.toLocaleLowerCase("tr-TR").includes(q));
-  const list = rows.length ? rows.map((item) => `<a class="thread${item.unread ? " unread" : ""}" href="#/mesaj/${item.user.id}">${avatar(item.user, 56, true)}<span class="copy"><strong>${esc(item.user.name)}</strong><em>${esc(item.last.text)}</em></span>${item.unread ? `<i class="unread-pip"></i>` : ""}</a>`).join("") : `<p class="empty">Bu aramada mesaj yok.</p>`;
-  return `<input id="inbox-q" class="inbox-search" type="search" placeholder="Ara" value="${esc(inboxQuery)}" aria-label="Mesajlarda ara" autocomplete="off"><div id="inbox-list">${list}</div>`;
+  const threads = store.inbox().filter((item) => !q || `${item.user.id} ${item.user.name} ${item.last.text}`.toLocaleLowerCase("tr-TR").includes(q));
+  const known = new Set(threads.map((item) => item.user.id));
+  const primary = threads.filter((item) => store.isFollowing(item.user.id) || item.user.followerIds?.includes(ME));
+  const general = threads.filter((item) => !primary.includes(item));
+  const requests = users.filter((user) => user.id !== ME && !known.has(user.id) && !store.isFollowing(user.id) && (!q || `${user.id} ${user.name}`.toLocaleLowerCase("tr-TR").includes(q)));
+  const line = (item) => `<a class="thread${item.unread ? " unread" : ""}" href="#/mesaj/${item.user.id}">${avatar(item.user, 56, true)}<span class="copy"><strong>${esc(item.user.name)}</strong><em>${esc(item.last.text)}</em></span><time>${timeAgo(item.last.at)}</time>${item.unread ? `<i class="unread-pip"></i>` : ""}</a>`;
+  const body = inboxTab === "istekler"
+    ? (requests.length ? requests.map((user) => `<a class="thread" href="#/mesaj/${user.id}">${avatar(user, 56)}<span class="copy"><strong>${esc(user.name)}</strong><em>Mesaj isteği</em></span></a>`).join("") : `<p class="empty">İstek yok.</p>`)
+    : (inboxTab === "genel" ? general : primary).map(line).join("") || `<p class="empty">Bu kutuda mesaj yok.</p>`;
+  const badge = primary.filter((item) => item.unread).length;
+  const tabs = ["birincil", "istekler", "genel"].map((id) => {
+    const label = id === "birincil" ? "Birincil" : id === "istekler" ? "İstekler" : "Genel";
+    const count = id === "birincil" && badge ? `<i class="count">${badge}</i>` : "";
+    return `<button type="button" data-act="inbox-tab" data-tab="${id}" class="${inboxTab === id ? "on" : ""}">${label}${count}</button>`;
+  }).join("");
+  return `<div class="inbox-tabs">${tabs}</div>${body}`;
+}
+
+function inboxScreen() {
+  return `${notesRow()}<input id="inbox-q" class="inbox-search" type="search" placeholder="Ara" value="${esc(inboxQuery)}" aria-label="Mesajlarda ara" autocomplete="off"><div id="inbox-list">${inboxRows()}</div>`;
 }
 
 function chatScreen(id) {
@@ -437,18 +472,29 @@ function profileScreen(id, tab) {
     ? `<a href="#/h/${pack.user}/${store.firstUnseen(pack)}" aria-label="Hikaye"><span class="ring ${store.storySeen(pack) ? "seen" : ""}">${avatar(user, 86)}</span></a>`
     : avatar(user, 86);
   const actions = user.id === ME
-    ? `<a class="btn" href="#/duzenle">Profili düzenle</a><a class="btn" href="#/yeni">Paylaş</a>`
+    ? `<a class="btn" href="#/duzenle">Profili düzenle</a><button type="button" class="btn" data-act="qr-open">Profili paylaş</button>`
     : `<button type="button" class="btn primary follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button><a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
   const lights = store.highlightsFor(user.id).map((item) => `<a href="#/h/${item.id}/0"><span class="hl"><img src="${safeSrc(item.cover)}" alt=""></span>${esc(item.title)}</a>`).join("");
+  const addLight = user.id === ME ? `<a href="#/yeni/hikaye"><span class="hl add">${icon("plus")}</span>Yeni</a>` : "";
   const body = tab === "reels"
     ? reelGrid(reels)
     : tab === "etiket"
       ? photoGrid(tagged)
       : photoGrid(posts);
-  return `<section class="profile-head">${photo}<ul class="stats"><li><strong>${formatCount(posts.length)}</strong><span>gönderi</span></li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></a></li></ul></section>
-    <div class="bio"><strong>${esc(store.displayName(user))}</strong><p>${esc(store.bioOf(user))}</p></div>
+  const note = store.noteOf(user);
+  const pronouns = store.pronounsOf(user);
+  const category = store.categoryOf(user);
+  const link = safeHttp(store.linkOf(user));
+  const likes = posts.reduce((sum, post) => sum + store.likeCount(post), 0);
+  const panel = user.id === ME
+    ? `<a class="panon" href="#/pano"><strong>Panon</strong><span>Gönderilerin ${formatCount(likes)} beğenme aldı.</span></a>`
+    : "";
+  const locked = user.id === ME && store.isPrivate() ? `<p class="hint">Gizli hesap</p>` : "";
+  return `<section class="profile-top"><div class="profile-ava">${note ? `<span class="note-bubble">${esc(note)}</span>` : ""}${photo}</div><div><div class="name-line"><strong>${esc(store.displayName(user))}</strong>${pronouns ? `<span>${esc(pronouns)}</span>` : ""}</div><ul class="stats"><li><strong>${formatCount(posts.length)}</strong><span>gönderi</span></li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></a></li></ul></div></section>
+    <div class="bio">${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${esc(store.bioOf(user))}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https?:\/\//, ""))}</a>` : ""}</div>
+    ${panel}
     <div class="row-btns">${actions}</div>
-    ${lights ? `<div class="highlights">${lights}</div>` : ""}
+    <div class="highlights">${addLight}${lights}</div>
     <nav class="ptabs">
       <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
       <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
@@ -595,26 +641,68 @@ function kindLabel(kind) {
   return "yeni gönderi";
 }
 
+function safeHttp(value) {
+  const url = String(value || "").trim();
+  return /^https:\/\/[\w.-]+(?:\/[\w./#?&=%+-]*)?$/i.test(url) ? url : "";
+}
+
+function profileUrl() {
+  const url = new URL(location.href);
+  url.hash = `#/u/${ME}`;
+  return url.toString();
+}
+
 function editScreen() {
   const user = getUser(ME);
   return `<form id="edit-form" class="form-page">
-    <div class="profile-head">${avatar(user, 86)}<div><strong>${esc(user.id)}</strong><p class="hint" style="text-align:left;padding:4px 0 0">Kullanıcı adı sabit.</p></div></div>
-    <label>Ad<input name="name" type="text" maxlength="40" value="${esc(store.displayName(user))}"></label>
+    <div class="edit-ava">${avatar(user, 86)}<label class="btn">Resmi veya avatarı düzenle<input id="avatar-file" class="sr" type="file" accept="image/*"></label></div>
+    <label>Adı<input name="name" type="text" maxlength="40" value="${esc(store.displayName(user))}"></label>
+    <label>Kullanıcı adı<input type="text" value="${esc(user.id)}" readonly></label>
+    <label>Hitaplar<input name="pronouns" type="text" maxlength="20" value="${esc(store.pronounsOf(user))}"></label>
     <label>Biyografi<textarea name="bio" maxlength="150">${esc(store.bioOf(user))}</textarea></label>
-    <div class="file-row"><label class="btn">Profil fotoğrafı<input id="avatar-file" class="sr" type="file" accept="image/*"></label></div>
+    <label>Bağlantı<input name="link" type="url" inputmode="url" maxlength="120" placeholder="https://" value="${esc(store.linkOf(user))}"></label>
+    <label>Not<input name="note" type="text" maxlength="60" value="${esc(store.noteOf(user))}"></label>
     <button class="btn primary" type="submit" style="width:100%">Bitti</button>
   </form>`;
 }
 
-function settingsScreen() {
+function themeLabel() {
   const current = store.theme();
-  const seg = ["system", "light", "dark"].map((value) => {
-    const label = value === "system" ? "Sistem" : value === "light" ? "Aydınlık" : "Karanlık";
-    return `<button type="button" data-act="theme" data-theme="${value}" class="${current === value ? "on" : ""}">${label}</button>`;
+  if (current === "light") return "Aydınlık";
+  if (current === "dark") return "Karanlık";
+  return "Sistem";
+}
+
+function settingsScreen() {
+  const sections = [
+    ["Hesabın", [
+      ["#/duzenle", "Profili düzenle", ""],
+      ["#/kaydedilenler", "Kaydedilenler", ""],
+    ]],
+    ["Bu telefon", [
+      ["theme", "Görünüm", themeLabel()],
+      ["private", store.isPrivate() ? "Hesap gizliliği" : "Hesap gizliliği", store.isPrivate() ? "Gizli" : "Herkese açık"],
+    ]],
+    ["İçerik", [
+      ["#/bildirim", "Bildirimler", ""],
+      ["#/mesaj", "Mesajlar", ""],
+    ]],
+    ["Daha fazla bilgi", [
+      ["about", "Hakkında", ""],
+    ]],
+  ];
+  const blocks = sections.map(([title, rows]) => {
+    const body = rows.map(([href, label, value]) => {
+      const tail = `${value ? `<span class="val">${esc(value)}</span>` : ""}${icon("chevron")}`;
+      if (href.startsWith("#/")) return `<a class="set-row" href="${href}"><span class="grow">${esc(label)}</span>${tail}</a>`;
+      return `<button type="button" class="set-row" data-act="setting" data-setting="${href}"><span class="grow">${esc(label)}</span>${tail}</button>`;
+    }).join("");
+    return `<h2 class="settings-sec">${esc(title)}</h2>${body}`;
   }).join("");
-  return `<div class="setting"><span>Görünüm</span><div class="seg">${seg}</div></div>
-    <div class="setting"><span>Bu cihaz</span><button type="button" class="btn" data-act="reset-ask">Verileri sil</button></div>
-    <div class="about"><p>Beğeniler, mesajlar, hikayeler ve yeni gönderiler bu telefonda kalır.</p><p>Fotoğraflar <a href="https://unsplash.com/license" target="_blank" rel="noopener noreferrer">Unsplash lisansı</a> ile eklendi.</p></div>`;
+  return `<input id="settings-q" class="inbox-search" type="search" placeholder="Ara" aria-label="Ayarlarda ara" autocomplete="off">${blocks}
+    <h2 class="settings-sec">Giriş</h2>
+    <button type="button" class="set-row account" data-act="add-account"><span class="grow">Hesap ekle</span></button>
+    <button type="button" class="set-row danger" data-act="reset-ask"><span class="grow">Çıkış yap</span></button>`;
 }
 
 function missing(text) {
@@ -644,6 +732,11 @@ function screen(r) {
   }
   if (r.head === "duzenle") return editScreen();
   if (r.head === "ayarlar") return settingsScreen();
+  if (r.head === "pano") {
+    const posts = store.postsBy(ME);
+    const likes = posts.reduce((sum, post) => sum + store.likeCount(post), 0);
+    return `<div class="panon page"><strong>Panon</strong><p>${formatCount(posts.length)} gönderi</p><p>${formatCount(likes)} beğenme</p><p>${formatCount(store.followerCount(getUser(ME)))} takipçi</p><p class="hint">Bu sayılar bu telefondaki hesaba ait.</p></div>`;
+  }
   if (r.head === "kaydedilenler") return photoGrid(store.savedPosts());
   if (r.head === "b") {
     const post = store.postById(r.parts[1]);
@@ -768,6 +861,27 @@ function after(r) {
     };
     inbox.addEventListener("input", onInput);
     cleanupFns.push(() => inbox.removeEventListener("input", onInput));
+  }
+  const settingsSearch = document.getElementById("settings-q");
+  if (settingsSearch) {
+    const onInput = () => {
+      const query = settingsSearch.value.trim().toLocaleLowerCase("tr-TR");
+      document.querySelectorAll(".set-row").forEach((row) => {
+        const show = !query || row.textContent.toLocaleLowerCase("tr-TR").includes(query);
+        row.hidden = !show;
+      });
+      document.querySelectorAll(".settings-sec").forEach((title) => {
+        let next = title.nextElementSibling;
+        let visible = false;
+        while (next && !next.classList.contains("settings-sec")) {
+          if (next.classList.contains("set-row") && !next.hidden) visible = true;
+          next = next.nextElementSibling;
+        }
+        title.hidden = query ? !visible : false;
+      });
+    };
+    settingsSearch.addEventListener("input", onInput);
+    cleanupFns.push(() => settingsSearch.removeEventListener("input", onInput));
   }
   const navSearch = document.getElementById("nav-q");
   if (navSearch) {
@@ -1210,6 +1324,43 @@ document.body.addEventListener("click", (event) => {
   } else if (act === "new-message") {
     const rows = users.filter((user) => user.id !== ME).map((user) => `<a href="#/mesaj/${user.id}">${esc(user.name)}</a>`).join("");
     openSheet(`<div class="grab"></div>${rows}<button type="button" data-act="close-sheet">Vazgeç</button>`);
+  } else if (act === "inbox-tab") {
+    inboxTab = zone.dataset.tab || "birincil";
+    const list = document.getElementById("inbox-list");
+    if (list) list.innerHTML = inboxRows();
+  } else if (act === "edit-note") {
+    openSheet(`<div class="grab"></div><form data-kind="note"><input name="note" maxlength="60" value="${esc(store.noteOf(getUser(ME)))}" placeholder="Notun" aria-label="Not"><button type="submit">Kaydet</button></form>`);
+  } else if (act === "qr-open") {
+    openQr();
+  } else if (act === "qr-color") {
+    const index = QR_COLORS.indexOf(qrColor);
+    qrColor = QR_COLORS[(index + 1) % QR_COLORS.length];
+    openQr();
+  } else if (act === "copy-profile") {
+    copyText(profileUrl());
+  } else if (act === "share-profile") {
+    const url = profileUrl();
+    if (navigator.share) navigator.share({ title: ME, url }).catch((error) => { if (error?.name !== "AbortError") copyText(url); });
+    else copyText(url);
+  } else if (act === "download-qr") {
+    downloadQr();
+  } else if (act === "setting") {
+    if (zone.dataset.setting === "theme") {
+      const current = store.theme();
+      const seg = ["system", "light", "dark"].map((value) => {
+        const label = value === "system" ? "Sistem" : value === "light" ? "Aydınlık" : "Karanlık";
+        return `<button type="button" data-act="theme" data-theme="${value}" class="${current === value ? "on" : ""}">${label}</button>`;
+      }).join("");
+      openSheet(`<div class="grab"></div><div class="seg" style="padding:12px">${seg}</div><button type="button" data-act="close-sheet">Vazgeç</button>`);
+    } else if (zone.dataset.setting === "private") {
+      store.setPrivate(!store.isPrivate());
+      render();
+      toast(store.isPrivate() ? "Hesap gizli" : "Hesap herkese açık");
+    } else if (zone.dataset.setting === "about") {
+      openSheet(`<div class="grab"></div><p class="hint">Beğeniler, mesajlar ve yeni gönderiler bu telefonda kalır. Fotoğraflar Unsplash lisansı ile eklendi.</p><button type="button" data-act="close-sheet">Kapat</button>`);
+    }
+  } else if (act === "add-account") {
+    toast("Bu telefonda tek profil var");
   } else if (act === "profile-menu") {
     openSheet(`<div class="grab"></div><a href="#/kaydedilenler">Kaydedilenler</a><a href="#/ayarlar">Ayarlar</a><button type="button" data-act="close-sheet">Vazgeç</button>`);
   } else if (act === "theme") {
@@ -1301,6 +1452,13 @@ document.body.addEventListener("submit", (event) => {
       toast("Yanıt gönderildi");
       form.reset();
     }
+    return;
+  }
+  if (kind === "note") {
+    const note = new FormData(form).get("note")?.toString().trim().slice(0, 60) || "";
+    if (!store.updateProfile({ note })) { toast("Not sığmadı"); return; }
+    closeSheet();
+    render();
     return;
   }
   if (kind === "create") {
@@ -1395,7 +1553,15 @@ document.body.addEventListener("submit", (event) => {
   const data = new FormData(form);
   const name = data.get("name")?.toString().trim().slice(0, 40) || null;
   const bio = data.get("bio")?.toString().slice(0, 150) ?? "";
-  if (!store.updateProfile({ name, bio })) {
+  const pronouns = data.get("pronouns")?.toString().trim().slice(0, 20) || "";
+  const note = data.get("note")?.toString().trim().slice(0, 60) || "";
+  const rawLink = data.get("link")?.toString().trim().slice(0, 120) || "";
+  const link = rawLink && !safeHttp(rawLink) ? null : rawLink;
+  if (link === null) {
+    toast("Bağlantı https ile başlamalı");
+    return;
+  }
+  if (!store.updateProfile({ name, bio, pronouns, note, link })) {
     toast("Profil sığmadı");
     return;
   }
@@ -1432,6 +1598,54 @@ document.addEventListener("keydown", (event) => {
   if (event.target instanceof HTMLElement && event.target.matches("input, textarea")) return;
   if (event.key === "ArrowRight") goFrame(1);
   if (event.key === "ArrowLeft") goFrame(-1);
+});
+
+function openQr() {
+  const svg = qrSvg(profileUrl(), qrColor);
+  document.getElementById("sheet").innerHTML = `<div class="backdrop" data-act="close-sheet"></div><div class="qr-modal" role="dialog" aria-label="Profil kodu"><div class="qr-top"><button type="button" class="icon-btn" data-act="close-sheet" aria-label="Kapat">${icon("close")}</button><button type="button" class="text-btn" data-act="qr-color">RENK</button></div><div class="qr-card">${svg}<strong>@${esc(ME)}</strong></div><div class="qr-actions"><button type="button" data-act="share-profile">Profili paylaş</button><button type="button" data-act="copy-profile">Bağlantıyı kopyala</button><button type="button" data-act="download-qr">İndir</button></div></div>`;
+}
+
+function downloadQr() {
+  const matrix = qrMatrix(profileUrl());
+  const cell = 12;
+  const quiet = 4;
+  const span = matrix.n + quiet * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = span * cell;
+  canvas.height = span * cell;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = qrColor;
+  for (let y = 0; y < matrix.n; y += 1) {
+    for (let x = 0; x < matrix.n; x += 1) {
+      if (!matrix.dark(x, y)) continue;
+      ctx.fillRect((x + quiet) * cell, (y + quiet) * cell, cell, cell);
+    }
+  }
+  const link = document.createElement("a");
+  link.href = canvas.toDataURL("image/png");
+  link.download = `${ME}-profil.png`;
+  link.click();
+}
+
+let stageSwipe = null;
+document.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (event.target.closest("a, button, input, textarea, .frame, .stories, .highlights, .chips, .notes")) return;
+  const r = route();
+  if (r.head !== "akis" && !(r.head === "mesaj" && !r.parts[1])) return;
+  stageSwipe = { x: event.clientX, y: event.clientY, head: r.head };
+});
+document.addEventListener("pointerup", (event) => {
+  if (!stageSwipe) return;
+  const dx = event.clientX - stageSwipe.x;
+  const dy = event.clientY - stageSwipe.y;
+  const head = stageSwipe.head;
+  stageSwipe = null;
+  if (Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+  if (head === "akis" && dx < 0) location.hash = "#/mesaj";
+  if (head === "mesaj" && dx > 0) location.hash = "#/";
 });
 
 document.addEventListener("touchstart", (event) => {

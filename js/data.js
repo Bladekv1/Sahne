@@ -8,6 +8,10 @@ export const users = [
     id: "bladekv1",
     name: "Blade",
     bio: "yazılım · istanbul\nsahne arkası",
+    note: "yazılım",
+    pronouns: "o",
+    category: "Yazılım",
+    link: "",
     followers: 1864,
     following: 312,
     followed: false,
@@ -18,6 +22,7 @@ export const users = [
   {
     id: "deniz.studio",
     name: "Deniz Akar",
+    note: "ışık var",
     bio: "ışık, film, istanbul\ngalata'dan notlar",
     followers: 24820,
     following: 480,
@@ -29,6 +34,7 @@ export const users = [
   {
     id: "ayse.tabak",
     name: "Ayşe Tabak",
+    note: "sofra kuruldu",
     bio: "sofra kurulunca konuşuruz",
     followers: 9320,
     following: 610,
@@ -40,6 +46,7 @@ export const users = [
   {
     id: "mert.gezer",
     name: "Mert Gezer",
+    note: "yoldayım",
     bio: "yol notları · dönüş tarihi yok",
     followers: 15640,
     following: 390,

@@ -25,7 +25,8 @@ function blank() {
     frames: [],
     reels: [],
     hidden: {},
-    profile: { name: null, bio: null, avatar: null },
+    profile: { name: null, bio: null, avatar: null, note: null, pronouns: null, link: null, category: null },
+    privateAccount: false,
     theme: "system",
     activitySeen: false,
   };
@@ -118,6 +119,36 @@ export function bioOf(user) {
 export function avatarOf(user) {
   if (user.id === ME && state.profile.avatar) return state.profile.avatar;
   return `media/avatars/${user.id}.svg`;
+}
+
+function ownField(user, key, seed) {
+  if (user.id === ME && state.profile[key] != null) return state.profile[key];
+  return seed || "";
+}
+
+export function noteOf(user) {
+  return ownField(user, "note", user.note);
+}
+
+export function pronounsOf(user) {
+  return ownField(user, "pronouns", user.pronouns);
+}
+
+export function linkOf(user) {
+  return ownField(user, "link", user.link);
+}
+
+export function categoryOf(user) {
+  return ownField(user, "category", user.category);
+}
+
+export function isPrivate() {
+  return !!state.privateAccount;
+}
+
+export function setPrivate(value) {
+  state.privateAccount = !!value;
+  return save();
 }
 
 export function updateProfile(patch) {
