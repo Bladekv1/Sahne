@@ -123,8 +123,19 @@ export const users = [
   },
 ];
 
+let localUsers = [];
+
+export function setLocalUsers(list) {
+  localUsers = Array.isArray(list) ? list : [];
+}
+
 export function getUser(id) {
-  return users.find((user) => user.id === id) || null;
+  return users.find((user) => user.id === id) || localUsers.find((user) => user.id === id) || null;
+}
+
+export function everyone() {
+  const ids = new Set(users.map((user) => user.id));
+  return [...users, ...localUsers.filter((user) => user.id && !ids.has(user.id))];
 }
 
 export const posts = [
