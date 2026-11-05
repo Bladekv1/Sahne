@@ -17,11 +17,19 @@
 </head>
 <body>
   <div id="app">
-    <header id="topbar" class="topbar"><a class="logo" href="#/">Bladekv1</a></header>
-    <main id="stage"></main>
-    <footer id="composer"></footer>
+    <nav id="sidenav" class="sidenav" aria-label="Ana menü"></nav>
+    <div id="searchpop" class="searchpop"></div>
+    <div class="workspace">
+      <header id="topbar" class="topbar"><a class="logo" href="#/">Bladekv1</a></header>
+      <div class="columns">
+        <main id="stage"></main>
+        <aside id="rail" class="rail" aria-label="Öneriler"></aside>
+      </div>
+      <footer id="composer"></footer>
+    </div>
     <nav id="tabbar" class="tabbar"></nav>
     <div id="sheet"></div>
+    <div id="modal"></div>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
   <noscript><p class="empty">Bladekv1 için JavaScript gerekir.</p></noscript>

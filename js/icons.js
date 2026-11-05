@@ -2,6 +2,7 @@ const paths = {
   home: '<path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.4Z"/>',
   homeFill: '<path fill="currentColor" stroke="none" d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.4Z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  compass: '<circle cx="12" cy="12" r="8.2"/><path d="m14.8 9.2-1.3 4.3-4.3 1.3 1.3-4.3 4.3-1.3Z"/>',
   reels: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M10 8.5v7l6-3.5-6-3.5Z" fill="currentColor" stroke="none"/>',
   reelsFill: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="currentColor" stroke="none"/><path d="M10 8.5v7l6-3.5-6-3.5Z" fill="var(--bg)" stroke="none"/>',
   heart: '<path d="M12 19.2s-6.4-4-6.4-8.2a3.6 3.6 0 0 1 6.4-1.8 3.6 3.6 0 0 1 6.4 1.8c0 4.2-6.4 8.2-6.4 8.2Z"/>',

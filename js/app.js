@@ -16,14 +16,40 @@ let exploreQuery = "";
 let inboxQuery = "";
 let storyGen = 0;
 let toastTimer = 0;
-let draft = { bg: CARDS[0], text: "", image: "", blobId: "", videoUrl: "" };
+function blankDraft() {
+  return {
+    bg: CARDS[0],
+    text: "",
+    image: "",
+    blobId: "",
+    videoUrl: "",
+    location: "",
+    alt: "",
+    ai: false,
+    useCard: false,
+    collaborators: [],
+    commentsClosed: false,
+  };
+}
+
+let draft = blankDraft();
 let pinBottom = false;
+let searchOpen = false;
+let navQuery = "";
 
 const app = document.getElementById("app");
 const stage = document.getElementById("stage");
 const topbar = document.getElementById("topbar");
 const tabbar = document.getElementById("tabbar");
 const composer = document.getElementById("composer");
+const sidenav = document.getElementById("sidenav");
+const rail = document.getElementById("rail");
+const searchpop = document.getElementById("searchpop");
+const modal = document.getElementById("modal");
+
+function isDesktop() {
+  return matchMedia("(min-width: 1024px)").matches;
+}
 
 function safeId(value) {
   const id = String(value ?? "");
@@ -77,6 +103,59 @@ function profileHref(id) {
 function safeHash(href) {
   const value = String(href ?? "");
   return /^#\/[a-z0-9._/-]*$/i.test(value) && value.length <= 120 ? value : "#/";
+}
+
+function sideNav(r) {
+  const mail = store.unreadTotal();
+  const items = [
+    ["#/", "akis", "Ana sayfa", r.head === "akis" ? "homeFill" : "home"],
+    ["search", "ara", "Ara", "search"],
+    ["#/kesfet", "kesfet", "Keşfet", "compass"],
+    ["#/reels", "reels", "Reels", r.head === "reels" ? "reelsFill" : "reels"],
+    ["#/mesaj", "mesaj", "Mesajlar", "send"],
+    ["#/bildirim", "bildirim", "Bildirimler", r.head === "bildirim" ? "heartFill" : "heart"],
+    ["#/yeni", "yeni", "Oluştur", "plus"],
+    ["#/profil", "profil", "Profil", ""],
+  ];
+  const links = items.map(([href, id, label, glyph]) => {
+    const on = id === "ara" ? searchOpen : id === "profil" ? r.head === "profil" : r.head === id;
+    const current = on ? ' aria-current="page"' : "";
+    const badge = id === "mesaj" && mail ? `<i class="nav-count count">${mail}</i>` : "";
+    const dot = id === "bildirim" && store.activityPending() ? `<i class="dot"></i>` : "";
+    const graphic = id === "profil" ? avatar(getUser(ME), 24) : icon(glyph);
+    if (id === "ara") {
+      return `<button type="button" class="${searchOpen ? "on" : ""}" data-act="toggle-search" aria-label="${label}" aria-pressed="${searchOpen}">${graphic}<span class="label">${label}</span></button>`;
+    }
+    return `<a href="${href}" aria-label="${label}"${current} class="${on ? "on" : ""}">${graphic}${badge}${dot}<span class="label">${label}</span></a>`;
+  }).join("");
+  return `<a class="nav-logo" href="#/" aria-label="Bladekv1"><svg class="logo-mark" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><rect x="2.2" y="2.2" width="19.6" height="19.6" rx="6" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="12" y="16.2" text-anchor="middle" font-family="Georgia, serif" font-size="12" font-style="italic" fill="currentColor">B</text></svg><span class="logo-word">Bladekv1</span></a>${links}<button type="button" class="nav-end" data-act="profile-menu" aria-label="Daha fazla">${icon("menu")}<span class="label">Daha fazla</span></button>`;
+}
+
+function searchResultHtml() {
+  const q = navQuery.trim();
+  const folded = q.toLocaleLowerCase("tr-TR");
+  const people = users.filter((user) => user.id !== ME && (!folded || `${user.id} ${user.name}`.toLocaleLowerCase("tr-TR").includes(folded))).slice(0, 8);
+  const posts = q ? store.allPosts().filter((post) => matches(post, q)).slice(0, 6) : [];
+  const peopleHtml = people.length
+    ? people.map((user) => `<a class="person" href="${profileHref(user.id)}">${avatar(user, 44)}<span class="copy"><strong>${esc(user.id)}</strong><small>${esc(user.name)}</small></span></a>`).join("")
+    : `<p class="empty">Hesap yok.</p>`;
+  const postsHtml = posts.map((post) => {
+    const src = safeSrc(post.images?.[0] || "");
+    return `<a class="search-post" href="#/g/${esc(post.id)}">${src ? `<img src="${src}" alt="">` : ""}<span>${esc(post.caption || post.location || "Gönderi")}</span></a>`;
+  }).join("");
+  return `${q ? "" : `<h2 class="section-label">Son aramalar</h2>`}${peopleHtml}${postsHtml ? `<h2 class="section-label">Gönderiler</h2>${postsHtml}` : ""}`;
+}
+
+function railHtml() {
+  const me = getUser(ME);
+  const people = suggestions.map((id) => getUser(id)).filter(Boolean);
+  return `<div class="rail-me">${avatar(me, 44)}<a href="#/profil"><strong>${esc(me.id)}</strong><small>${esc(store.displayName(me))}</small></a><a class="rail-switch" href="#/profil">Profil</a></div>
+    <div class="rail-head"><span>Senin için önerilenler</span><a href="#/kesfet">Tümünü gör</a></div>
+    ${people.map((user) => {
+      const on = store.isFollowing(user.id);
+      return `<div class="rail-person">${avatar(user, 32)}<a href="${profileHref(user.id)}"><strong>${esc(user.id)}</strong><small>Senin için öneriliyor</small></a><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip Et"}</button></div>`;
+    }).join("")}
+    <p class="rail-foot">Bladekv1 · beğeniler ve mesajlar bu cihazda kalır</p>`;
 }
 
 function tabBar(r) {
@@ -218,9 +297,19 @@ function postCard(post, linkComments) {
     </div>
     <button type="button" class="like-count" data-act="likes" data-id="${post.id}" data-likecount="${post.id}">${formatCount(store.likeCount(post))} beğenme</button>
     <p class="caption"><a class="author" href="${profileHref(user.id)}">${esc(user.id)}</a> ${rich(caption)}${more}</p>
+    ${postExtras(post)}
     ${linkComments ? commentLink : ""}
     <time datetime="${new Date(post.at).toISOString()}">${timeAgo(post.at)}</time>
   </article>`;
+}
+
+function postExtras(post) {
+  const people = (post.collaborators || []).map((id) => safeId(id)).filter((id) => id && id !== post.user);
+  const together = people.length
+    ? `<p class="caption collab">Birlikte ${people.map((id) => `<a href="${profileHref(id)}">${esc(id)}</a>`).join(", ")}</p>`
+    : "";
+  const ai = post.ai ? `<p class="caption ai-note">AI ile oluşturuldu</p>` : "";
+  return `${together}${ai}`;
 }
 
 function storyStrip() {
@@ -239,7 +328,7 @@ function feedScreen() {
     index > 1 ? 'loading="lazy"' : 'loading="eager"',
   ));
   const people = suggestions.map((id) => getUser(id)).filter(Boolean);
-  return `${storyStrip()}${cards.join("")}<section class="suggest"><h2>Senin için</h2><div class="scards">${people.map((user) => {
+  return `<p class="desk-label">Takip ettiklerin</p>${storyStrip()}${cards.join("")}<section class="suggest"><h2>Senin için</h2><div class="scards">${people.map((user) => {
     const on = store.isFollowing(user.id);
     return `<article class="scard">${avatar(user, 56)}<b>${esc(user.id)}</b><span>${esc(user.name)}</span><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip et"}</button></article>`;
   }).join("")}</div></section>`;
@@ -403,9 +492,11 @@ function postScreen(id) {
   }
   if (!post) return missing("Bu gönderi yok.");
   const comments = store.commentsFor(post);
-  const list = comments.length
-    ? `<ul class="comments">${comments.map((comment) => `<li class="comment-line"><a class="author" href="${profileHref(comment.user)}">${esc(comment.user)}</a> ${rich(comment.text)} <time>${timeAgo(comment.at)}</time>${comment.own ? `<button type="button" data-act="del-comment" data-post="${post.id}" data-id="${comment.id}">Sil</button>` : ""}</li>`).join("")}</ul>`
-    : `<p class="empty">İlk yorumu sen yap.</p>`;
+  const list = post.commentsClosed
+    ? `<p class="hint">Yorumlar kapalı.</p>`
+    : comments.length
+      ? `<ul class="comments">${comments.map((comment) => `<li class="comment-line"><a class="author" href="${profileHref(comment.user)}">${esc(comment.user)}</a> ${rich(comment.text)} <time>${timeAgo(comment.at)}</time>${comment.own ? `<button type="button" data-act="del-comment" data-post="${post.id}" data-id="${comment.id}">Sil</button>` : ""}</li>`).join("")}</ul>`
+      : `<p class="empty">İlk yorumu sen yap.</p>`;
   return `${postCard(post, false)}${list}`;
 }
 
@@ -429,26 +520,69 @@ function storyScreen(id, index) {
   </section>`;
 }
 
-function choiceScreen() {
-  return `<div class="choices">
-    <a class="choice" href="#/yeni/gonderi">Gönderi<small>Fotoğraf ya da renkli kart</small></a>
+function choiceLinks() {
+  return `<a class="choice" href="#/yeni/gonderi">Gönderi<small>Fotoğraf ya da renkli kart</small></a>
     <a class="choice" href="#/yeni/hikaye">Hikaye<small>Bir kare, birkaç saniye</small></a>
-    <a class="choice" href="#/yeni/reel">Reel<small>Fotoğrafı kaydır ya da video seç</small></a>
-  </div>`;
+    <a class="choice" href="#/yeni/reel">Reel<small>Fotoğrafı kaydır ya da video seç</small></a>`;
+}
+
+function choiceScreen() {
+  return `<div class="choices">${choiceLinks()}</div>`;
+}
+
+function swatchRow() {
+  return CARDS.map((color) => `<button type="button" data-act="swatch" data-bg="${color}" class="${draft.bg === color && draft.useCard && !draft.image ? "on" : ""}" style="background:${color}" aria-label="Renk"></button>`).join("");
+}
+
+function postComposer() {
+  const me = getUser(ME);
+  const photo = safeSrc(draft.image || "");
+  const preview = draft.videoUrl
+    ? `<video src="${draft.videoUrl}" muted playsinline autoplay loop></video>`
+    : photo
+      ? `<img src="${photo}" alt="">`
+      : draft.useCard
+        ? `<img src="${cardUri(draft.bg, draft.text || "yeni gönderi")}" alt="">`
+        : `<div class="drop-empty">${icon("camera")}<p>Fotoğrafları buraya sürükle</p><label class="btn primary">Bilgisayardan seç<input class="js-draft-file sr" type="file" accept="image/*"></label><label class="btn cam-btn">Kamera<input class="js-draft-file sr" type="file" accept="image/*" capture="environment"></label></div>`;
+  const tag = photo ? `<button type="button" class="tag-chip" data-act="tag-people">İnsanları etiketlemek için fotoğrafa tıkla</button>` : "";
+  const change = photo || draft.videoUrl || draft.useCard
+    ? `<label class="change-photo">Değiştir<input class="js-draft-file sr" type="file" accept="image/*"></label>`
+    : "";
+  const names = (draft.collaborators || []).map((id) => safeId(id)).filter(Boolean);
+  const count = (draft.text || "").length.toLocaleString("tr-TR");
+  return `<a class="create-backdrop" href="#/" aria-label="Kapat"></a>
+    <form class="composer-page create-form" data-kind="create" data-create="gonderi">
+      <div class="create-head"><a class="icon-btn" href="#/yeni" aria-label="Geri">${icon("back")}</a><h1>Yeni gönderi oluştur</h1><button class="share-btn" type="submit">Paylaş</button></div>
+      <div class="create-split">
+        <div class="create-stage${photo ? " has-photo" : ""}"><div class="preview">${preview}${tag}${change}</div><div class="swatches mobile-swatches">${swatchRow()}</div></div>
+        <div class="create-meta">
+          <a class="who" href="#/profil">${avatar(me, 32)}<strong>${esc(me.id)}</strong></a>
+          <textarea id="draft-text" class="caption-box" name="text" maxlength="2200" placeholder="Bir açıklama ekle...">${esc(draft.text)}</textarea>
+          <div class="char-count"><span id="char-count">${count}</span>/2.200</div>
+          <input class="meta-field" name="location" maxlength="80" placeholder="Konum ekle" value="${esc(draft.location || "")}" autocomplete="off">
+          <button type="button" class="meta-btn" data-act="pick-collab">Katkıda bulunanlar ekle${names.length ? `<small>${esc(names.join(", "))}</small>` : ""}</button>
+          <label class="ai-row"><span><strong>AI etiketi ekle</strong><p>Bu etiket, AI ile oluşturulan gerçekçi fotoğraf ve videolar için. İnsanlar gönderide bunu görür.</p></span><input class="switch" type="checkbox" name="ai" ${draft.ai ? "checked" : ""} aria-label="AI etiketi"></label>
+          <details><summary>Erişilebilirlik</summary><input class="meta-field" name="alt" maxlength="200" placeholder="Alt metin yaz" value="${esc(draft.alt || "")}"></details>
+          <details><summary>Şurada paylaş</summary><p>Gönderi Bladekv1 akışında paylaşılır.</p></details>
+          <details><summary>Gelişmiş ayarlar</summary><label class="check-row"><span>Yorumları kapat</span><input class="switch" type="checkbox" name="commentsClosed" ${draft.commentsClosed ? "checked" : ""}></label></details>
+        </div>
+      </div>
+      <button class="btn primary share-bottom" type="submit" style="width:100%;margin-top:12px">Paylaş</button>
+    </form>`;
 }
 
 function createScreen(kind) {
+  if (kind === "gonderi") return postComposer();
   const preview = draft.videoUrl
     ? `<video src="${draft.videoUrl}" muted playsinline autoplay loop></video>`
     : draft.image
       ? `<img src="${safeSrc(draft.image)}" alt="">`
       : `<img src="${cardUri(draft.bg, draft.text || kindLabel(kind))}" alt="">`;
-  const swatches = CARDS.map((color) => `<button type="button" data-act="swatch" data-bg="${color}" class="${draft.bg === color && !draft.image ? "on" : ""}" style="background:${color}" aria-label="Renk"></button>`).join("");
   const capture = kind === "reel" ? "" : `<label class="btn">Kamera<input class="js-draft-file sr" type="file" accept="image/*" capture="environment"></label>`;
   const accept = kind === "reel" ? "image/*,video/mp4,video/quicktime" : "image/*";
   return `<form class="composer-page" data-kind="create" data-create="${esc(kind)}">
     <div class="preview">${preview}</div>
-    <div class="swatches">${swatches}</div>
+    <div class="swatches">${swatchRow()}</div>
     <div class="file-row"><label class="btn">Fotoğraf seç<input class="js-draft-file sr" type="file" accept="${accept}"></label>${capture}</div>
     <textarea id="draft-text" class="caption-box" name="text" maxlength="${kind === "hikaye" ? 140 : 2200}" placeholder="${kind === "hikaye" ? "Hikayeye bir cümle" : "Açıklama yaz"}">${esc(draft.text)}</textarea>
     <button class="btn primary" type="submit" style="width:100%;margin-top:12px">Paylaş</button>
@@ -504,7 +638,10 @@ function screen(r) {
       return `<a class="note" href="${href}">${avatar(user, 44, true)}<span class="copy"><p><strong>${esc(user.id)}</strong> ${esc(item.text)}</p><time>${timeAgo(item.at)}</time></span></a>`;
     }).join("");
   }
-  if (r.head === "yeni") return r.parts[1] ? createScreen(r.parts[1]) : choiceScreen();
+  if (r.head === "yeni") {
+    if (isDesktop() && (!r.parts[1] || r.parts[1] === "gonderi")) return feedScreen();
+    return r.parts[1] ? createScreen(r.parts[1]) : choiceScreen();
+  }
   if (r.head === "duzenle") return editScreen();
   if (r.head === "ayarlar") return settingsScreen();
   if (r.head === "kaydedilenler") return photoGrid(store.savedPosts());
@@ -529,10 +666,30 @@ function composerFor(r) {
   if (r.head === "mesaj" && r.parts[1] && getUser(r.parts[1])) {
     return `<form id="composer-form" data-kind="chat" data-user="${esc(r.parts[1])}"><input name="text" maxlength="1000" placeholder="Mesaj yaz..." enterkeyhint="send" autocomplete="off" aria-label="Mesaj"><button type="submit" aria-label="Gönder">${icon("send")}</button></form>`;
   }
-  if (r.head === "g" && (store.postById(r.parts[1]) || store.reelById(r.parts[1]))) {
-    return `<form id="composer-form" data-kind="comment" data-id="${esc(r.parts[1])}"><input name="text" maxlength="500" placeholder="Yorum ekle..." enterkeyhint="send" autocomplete="off" aria-label="Yorum"><button type="submit" aria-label="Gönder">${icon("send")}</button></form>`;
+  if (r.head === "g") {
+    const post = store.postById(r.parts[1]);
+    if (post?.commentsClosed) return "";
+    if (post || store.reelById(r.parts[1])) {
+      return `<form id="composer-form" data-kind="comment" data-id="${esc(r.parts[1])}"><input name="text" maxlength="500" placeholder="Yorum ekle..." enterkeyhint="send" autocomplete="off" aria-label="Yorum"><button type="submit" aria-label="Gönder">${icon("send")}</button></form>`;
+    }
   }
   return "";
+}
+
+function paintModal(r) {
+  if (!isDesktop()) {
+    modal.innerHTML = "";
+    return;
+  }
+  if (r.head === "yeni" && r.parts[1] === "gonderi") {
+    modal.innerHTML = postComposer();
+    return;
+  }
+  if (r.head === "yeni" && !r.parts[1]) {
+    modal.innerHTML = `<a class="create-backdrop lite" href="#/" aria-label="Kapat"></a><div class="choice-pop" role="menu">${choiceLinks()}</div>`;
+    return;
+  }
+  modal.innerHTML = "";
 }
 
 function rootTab(r) {
@@ -547,16 +704,25 @@ function render() {
   applyTheme();
   const r = route();
   if (r.head === "bildirim") store.seeActivity();
+  const behindFeed = isDesktop() && r.head === "yeni" && (!r.parts[1] || r.parts[1] === "gonderi");
   app.classList.toggle("reels-mode", r.head === "reels");
   app.classList.toggle("immersive", r.head === "h");
+  app.classList.toggle("home", r.head === "akis" || behindFeed);
+  app.classList.toggle("show-rail", r.head === "akis" || behindFeed);
+  app.classList.toggle("wide", ["profil", "u", "kesfet", "kaydedilenler", "mesaj", "bildirim"].includes(r.head));
   paintTop(r);
   const showTabs = rootTab(r);
   tabbar.hidden = !showTabs;
   tabbar.innerHTML = showTabs ? tabBar(r) : "";
+  sidenav.innerHTML = sideNav(r);
+  rail.innerHTML = railHtml();
+  searchpop.classList.toggle("open", searchOpen && isDesktop());
+  searchpop.innerHTML = searchOpen && isDesktop() ? `<button type="button" class="search-backdrop" data-act="close-search" aria-label="Aramayı kapat"></button><div class="search-card"><input id="nav-q" class="search" type="search" placeholder="Ara" value="${esc(navQuery)}" aria-label="Ara" autocomplete="off"><div id="nav-results">${searchResultHtml()}</div></div>` : "";
   const bar = composerFor(r);
   composer.hidden = !bar;
   composer.innerHTML = bar;
   stage.innerHTML = screen(r);
+  paintModal(r);
   const stick = pinBottom || (r.head === "mesaj" && r.parts[1]);
   pinBottom = false;
   stage.scrollTop = stick ? stage.scrollHeight : (scrollMem.get(next) || 0);
@@ -603,6 +769,23 @@ function after(r) {
     inbox.addEventListener("input", onInput);
     cleanupFns.push(() => inbox.removeEventListener("input", onInput));
   }
+  const navSearch = document.getElementById("nav-q");
+  if (navSearch) {
+    const onInput = () => {
+      navQuery = navSearch.value;
+      const box = document.getElementById("nav-results");
+      if (box) box.innerHTML = searchResultHtml();
+    };
+    navSearch.addEventListener("input", onInput);
+    cleanupFns.push(() => navSearch.removeEventListener("input", onInput));
+    navSearch.focus();
+    const end = navSearch.value.length;
+    navSearch.setSelectionRange(end, end);
+  }
+  bindCreateDrop();
+  const pop = document.querySelector(".choice-pop");
+  const trigger = sidenav.querySelector('a[href="#/yeni"]');
+  if (pop && trigger) pop.style.top = `${trigger.getBoundingClientRect().top}px`;
   if (r.head === "h") mountStory();
   if (r.head === "reels") mountReels();
 }
@@ -770,7 +953,7 @@ function paintFollow(id) {
   const on = store.isFollowing(id);
   document.querySelectorAll(`[data-follow="${CSS.escape(id)}"]`).forEach((button) => {
     button.classList.toggle("following", on);
-    button.textContent = on ? "Takiptesin" : "Takip et";
+    button.textContent = on ? "Takiptesin" : button.closest(".rail-person") ? "Takip Et" : "Takip et";
     button.setAttribute("aria-pressed", String(on));
   });
 }
@@ -860,6 +1043,60 @@ function compressImage(file, max) {
 function rememberDraft() {
   const field = document.getElementById("draft-text");
   if (field) draft.text = field.value;
+  const form = document.querySelector(".create-form, form[data-kind='create']");
+  if (!(form instanceof HTMLFormElement)) return;
+  const data = new FormData(form);
+  if (form.elements.location) draft.location = data.get("location")?.toString() || "";
+  if (form.elements.alt) draft.alt = data.get("alt")?.toString() || "";
+  if (form.elements.ai) draft.ai = Boolean(form.elements.ai.checked);
+  if (form.elements.commentsClosed) draft.commentsClosed = Boolean(form.elements.commentsClosed.checked);
+}
+
+function bindCreateDrop() {
+  const zone = document.querySelector(".create-stage");
+  if (!zone) return;
+  const over = (event) => event.preventDefault();
+  const drop = (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0];
+    if (file) readDraftFile(file);
+  };
+  zone.addEventListener("dragover", over);
+  zone.addEventListener("drop", drop);
+  cleanupFns.push(() => {
+    zone.removeEventListener("dragover", over);
+    zone.removeEventListener("drop", drop);
+  });
+}
+
+async function readDraftFile(file) {
+  rememberDraft();
+  try {
+    if (file.type.startsWith("video/")) {
+      if (file.size > 20 * 1024 * 1024) {
+        toast("Video 20 MB altında olmalı");
+        return;
+      }
+      const id = `blob-${Date.now()}`;
+      await putBlob(id, file);
+      draft.blobId = id;
+      draft.videoUrl = URL.createObjectURL(file);
+      blobUrls.set(id, draft.videoUrl);
+      draft.image = "";
+      draft.useCard = false;
+    } else if (file.type.startsWith("image/") || file.type === "") {
+      draft.image = await compressImage(file, 1080);
+      draft.blobId = "";
+      draft.videoUrl = "";
+      draft.useCard = false;
+    } else {
+      toast("JPG, PNG veya MP4 seç");
+      return;
+    }
+    render();
+  } catch {
+    toast("Bu dosya açılamadı");
+  }
 }
 
 function shiftCarousel(id, direction) {
@@ -982,7 +1219,7 @@ document.body.addEventListener("click", (event) => {
     openSheet(`<div class="grab"></div><p class="hint">Beğeniler, mesajlar ve eklediğin gönderiler bu telefondan silinir.</p><button type="button" class="danger" data-act="reset-do">Sil</button><button type="button" data-act="close-sheet">Vazgeç</button>`);
   } else if (act === "reset-do") {
     store.reset();
-    draft = { bg: CARDS[0], text: "", image: "", blobId: "", videoUrl: "" };
+    draft = blankDraft();
     location.hash = "#/";
     render();
     toast("Bu cihaz sıfırlandı");
@@ -992,6 +1229,39 @@ document.body.addEventListener("click", (event) => {
     draft.image = "";
     draft.videoUrl = "";
     draft.blobId = "";
+    draft.useCard = true;
+    render();
+  } else if (act === "toggle-search") {
+    searchOpen = !searchOpen;
+    render();
+  } else if (act === "close-search") {
+    searchOpen = false;
+    render();
+  } else if (act === "tag-people") {
+    rememberDraft();
+    const rows = users.filter((user) => user.id !== ME).map((user) => `<button type="button" data-act="mention" data-user="${esc(user.id)}">${esc(user.name)}</button>`).join("");
+    openSheet(`<div class="grab"></div><p class="hint">Etiketle</p>${rows}<button type="button" data-act="close-sheet">Vazgeç</button>`);
+  } else if (act === "mention") {
+    rememberDraft();
+    const id = safeId(zone.dataset.user);
+    if (id) draft.text = `${draft.text.trim()} @${id}`.trim();
+    closeSheet();
+    render();
+  } else if (act === "pick-collab") {
+    rememberDraft();
+    const chosen = new Set(draft.collaborators || []);
+    const rows = users.filter((user) => user.id !== ME).map((user) => `<button type="button" data-act="toggle-collab" data-user="${esc(user.id)}">${esc(user.name)}${chosen.has(user.id) ? " · eklendi" : ""}</button>`).join("");
+    openSheet(`<div class="grab"></div><p class="hint">Katkıda bulunanlar</p>${rows}<button type="button" data-act="close-sheet">Vazgeç</button>`);
+  } else if (act === "toggle-collab") {
+    rememberDraft();
+    const id = safeId(zone.dataset.user);
+    if (id) {
+      const chosen = new Set(draft.collaborators || []);
+      if (chosen.has(id)) chosen.delete(id);
+      else if (chosen.size < 5) chosen.add(id);
+      draft.collaborators = [...chosen];
+    }
+    closeSheet();
     render();
   }
 });
@@ -1050,7 +1320,7 @@ document.body.addEventListener("submit", (event) => {
         at: Date.now(),
       });
       if (!ok) { toast("Hikaye sığmadı"); return; }
-      draft = { bg: CARDS[0], text: "", image: "", blobId: "", videoUrl: "" };
+      draft = blankDraft();
       location.hash = "#/h/bladekv1/0";
       return;
     }
@@ -1068,7 +1338,7 @@ document.body.addEventListener("submit", (event) => {
         topic: "Sen",
       };
       if (!store.addReel(reel)) { toast("Reel sığmadı"); return; }
-      draft = { bg: CARDS[0], text: "", image: "", blobId: "", videoUrl: "" };
+      draft = blankDraft();
       location.hash = `#/reels/${reel.id}`;
       return;
     }
@@ -1076,17 +1346,20 @@ document.body.addEventListener("submit", (event) => {
       id: `up-${Date.now()}`,
       user: ME,
       images: [image],
-      alt: "Senin gönderin",
+      alt: (draft.alt || "").trim().slice(0, 200) || "Senin gönderin",
       caption: text.slice(0, 2200),
-      location: "",
+      location: (draft.location || "").trim().slice(0, 80),
       topic: "Sen",
       likes: 0,
       at: Date.now(),
       likers: [],
       comments: [],
+      ai: Boolean(draft.ai),
+      collaborators: (draft.collaborators || []).map((id) => safeId(id)).filter(Boolean),
+      commentsClosed: Boolean(draft.commentsClosed),
     };
     if (!store.addPost(post)) { toast("Gönderi sığmadı"); return; }
-    draft = { bg: CARDS[0], text: "", image: "", blobId: "", videoUrl: "" };
+    draft = blankDraft();
     location.hash = "#/";
     toast("Paylaşıldı");
   }
@@ -1097,32 +1370,7 @@ document.body.addEventListener("change", async (event) => {
   if (!(input instanceof HTMLInputElement)) return;
   if (input.classList.contains("js-draft-file")) {
     const file = input.files?.[0];
-    if (!file) return;
-    rememberDraft();
-    try {
-      if (file.type.startsWith("video/")) {
-        if (file.size > 20 * 1024 * 1024) {
-          toast("Video 20 MB altında olmalı");
-          return;
-        }
-        const id = `blob-${Date.now()}`;
-        await putBlob(id, file);
-        draft.blobId = id;
-        draft.videoUrl = URL.createObjectURL(file);
-        blobUrls.set(id, draft.videoUrl);
-        draft.image = "";
-      } else if (file.type.startsWith("image/") || file.type === "") {
-        draft.image = await compressImage(file, 1080);
-        draft.blobId = "";
-        draft.videoUrl = "";
-      } else {
-        toast("JPG, PNG veya MP4 seç");
-        return;
-      }
-      render();
-    } catch {
-      toast("Bu dosya açılamadı");
-    }
+    if (file) readDraftFile(file);
   }
   if (input.id === "avatar-file") {
     const file = input.files?.[0];
@@ -1155,8 +1403,31 @@ document.body.addEventListener("submit", (event) => {
   toast("Profil güncellendi");
 });
 
+document.body.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) return;
+  if (target.id === "draft-text") {
+    draft.text = target.value;
+    const count = document.getElementById("char-count");
+    if (count) count.textContent = target.value.length.toLocaleString("tr-TR");
+  } else if (target.name === "location") draft.location = target.value;
+  else if (target.name === "alt") draft.alt = target.value;
+});
+
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeSheet();
+  if (event.key === "Escape") {
+    if (document.querySelector("#sheet .sheet")) {
+      closeSheet();
+      return;
+    }
+    if (searchOpen) {
+      searchOpen = false;
+      render();
+      return;
+    }
+    if (modal.innerHTML && isDesktop()) location.hash = "#/";
+    return;
+  }
   if (!document.querySelector(".story")) return;
   if (event.target instanceof HTMLElement && event.target.matches("input, textarea")) return;
   if (event.key === "ArrowRight") goFrame(1);
@@ -1189,7 +1460,11 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 });
 window.visualViewport?.addEventListener("resize", syncViewport);
 window.visualViewport?.addEventListener("scroll", syncViewport);
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => {
+  searchOpen = false;
+  render();
+});
+matchMedia("(min-width: 1024px)").addEventListener("change", render);
 
 async function hydrate() {
   for (const id of store.ownReelBlobs()) {
