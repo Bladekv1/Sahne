@@ -3,9 +3,12 @@ import {
   activity,
   getUser,
   highlights,
+  accountHistory as seedHistory,
   posts as seedPosts,
   reels as seedReels,
+  seedLikes,
   stories as seedStories,
+  storyReplies as seedStoryReplies,
   threads as seedThreads,
   users,
 } from "./data.js";
@@ -25,6 +28,8 @@ function blank() {
     frames: [],
     reels: [],
     hidden: {},
+    history: [],
+    storyReplies: [],
     profile: { name: null, bio: null, avatar: null, note: null, pronouns: null, link: null, category: null },
     privateAccount: false,
     theme: "system",
@@ -72,7 +77,8 @@ export function setTheme(value) {
 }
 
 export function liked(id) {
-  return !!state.likes[id];
+  if (Object.prototype.hasOwnProperty.call(state.likes, id)) return !!state.likes[id];
+  return seedLikes.includes(id);
 }
 
 export function saved(id) {
@@ -80,8 +86,7 @@ export function saved(id) {
 }
 
 export function toggleLike(id) {
-  if (state.likes[id]) delete state.likes[id];
-  else state.likes[id] = true;
+  state.likes[id] = !liked(id);
   save();
 }
 
@@ -92,7 +97,7 @@ export function toggleSave(id) {
 }
 
 export function likeCount(item) {
-  return (item.likes || 0) + (state.likes[item.id] ? 1 : 0);
+  return (item.likes || 0) + (liked(item.id) ? 1 : 0);
 }
 
 export function isFollowing(id) {
@@ -152,6 +157,14 @@ export function setPrivate(value) {
 }
 
 export function updateProfile(patch) {
+  const labels = { name: "Ad", bio: "Biyografi", pronouns: "Hitaplar", note: "Not", link: "Bağlantı", category: "Kategori", avatar: "Profil fotoğrafı" };
+  const events = Object.entries(patch).filter(([key, value]) => labels[key] && state.profile[key] !== value).map(([key, value]) => ({
+    id: `h-${Date.now()}-${key}`,
+    label: labels[key],
+    detail: key === "avatar" ? "Fotoğraf güncellendi" : String(value || "Boş").slice(0, 80),
+    at: Date.now(),
+  }));
+  if (events.length) state.history = [...events, ...(state.history || [])].slice(0, 40);
   state.profile = { ...state.profile, ...patch };
   return save();
 }
@@ -208,6 +221,39 @@ export function tagged(userId) {
 
 export function savedPosts() {
   return allPosts().filter((post) => state.saves[post.id]);
+}
+
+export function hiddenPosts() {
+  return [...state.posts, ...seedPosts].filter((post) => post.user === ME && state.hidden[post.id]).sort((a, b) => b.at - a.at);
+}
+
+export function likedMedia() {
+  return [...allPosts(), ...allReels()].filter((item) => liked(item.id)).sort((a, b) => b.at - a.at);
+}
+
+export function ownComments() {
+  const rows = [];
+  for (const item of [...allPosts(), ...allReels()]) {
+    for (const comment of commentsFor(item)) {
+      if (comment.user !== ME) continue;
+      rows.push({ ...comment, postId: item.id, image: item.images?.[0] || item.poster || item.image || "", reel: Boolean(item.src) });
+    }
+  }
+  return rows.sort((a, b) => b.at - a.at);
+}
+
+export function storyReplies() {
+  return [...(state.storyReplies || []), ...seedStoryReplies].sort((a, b) => b.at - a.at);
+}
+
+export function addStoryReply(userId, text) {
+  const item = { id: `sr-${Date.now()}`, user: userId, text, at: Date.now() };
+  state.storyReplies = [item, ...(state.storyReplies || [])];
+  return save() ? item : null;
+}
+
+export function accountHistory() {
+  return [...(state.history || []), ...seedHistory].sort((a, b) => b.at - a.at);
 }
 
 export function postById(id) {

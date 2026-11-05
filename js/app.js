@@ -16,6 +16,10 @@ let currentHash = "";
 let exploreQuery = "";
 let inboxQuery = "";
 let inboxTab = "birincil";
+let activitySort = "new";
+let activitySelect = false;
+let activitySection = "";
+const activityPicked = new Set();
 let qrColor = "#111111";
 const QR_COLORS = ["#111111", "#083d75", "#ed4956", "#0b3d2e", "#6b2d5b"];
 let storyGen = 0;
@@ -239,6 +243,8 @@ function paintTop(r) {
     ayarlar: ["Ayarlar ve hareketler", "#/profil"],
     pano: ["Panon", "#/profil"],
     kaydedilenler: ["Kaydedilenler", "#/profil"],
+    arsiv: ["Arşiv", "#/profil"],
+    hareket: ["Hareketlerin", "#/profil"],
     b: ["Beğenenler", safeId(r.parts[1]) ? `#/g/${safeId(r.parts[1])}` : "#/"],
     takipci: ["Takipçi", profileHref(safeId(r.parts[1]) || ME)],
     takip: ["Takip", profileHref(safeId(r.parts[1]) || ME)],
@@ -481,6 +487,7 @@ function profileScreen(id, tab) {
     : tab === "etiket"
       ? photoGrid(tagged)
       : photoGrid(posts);
+  if (isDesktop()) return desktopProfile(user, photo, actions, addLight, lights, base, tab, body);
   const note = store.noteOf(user);
   const pronouns = store.pronounsOf(user);
   const category = store.categoryOf(user);
@@ -503,11 +510,134 @@ function profileScreen(id, tab) {
     ${body}`;
 }
 
+function desktopProfile(user, photo, _actions, addLight, lights, base, tab, body) {
+  const pronouns = store.pronounsOf(user);
+  const category = store.categoryOf(user);
+  const link = safeHttp(store.linkOf(user));
+  const locked = user.id === ME && store.isPrivate() ? `<p class="hint">Gizli hesap</p>` : "";
+  const buttons = user.id === ME
+    ? `<a class="btn" href="#/duzenle">Profili düzenle</a><a class="btn" href="#/arsiv">Arşivi gör</a>`
+    : `<button type="button" class="btn primary follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button><a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
+  const bio = esc(store.bioOf(user)).replaceAll("\n", "<br>");
+  return `<header class="desk-profile"><div class="desk-ava">${photo}</div><div>
+      <h1>${esc(user.id)}</h1>
+      <ul class="desk-stats"><li><strong>${formatCount(store.postsBy(user.id).length)}</strong> gönderi</li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong> takipçi</a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong> takip</a></li></ul>
+      <div class="desk-bio"><strong>${esc(store.displayName(user))}</strong>${pronouns ? ` <span>${esc(pronouns)}</span>` : ""}${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${bio}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https:\/\//, ""))}</a>` : ""}</div>
+    </div></header>
+    <div class="desk-actions">${buttons}</div>
+    <div class="highlights desk-highlights">${addLight}${lights}</div>
+    <nav class="ptabs">
+      <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
+      <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
+      <a href="${base}/etiket" class="${tab === "etiket" ? "on" : ""}" aria-label="Etiketlenenler">${icon("tag")}</a>
+    </nav>
+    ${body}`;
+}
+
+function activityTools(canSelect) {
+  const label = activitySort === "new" ? "En yeniden en eskiye" : "En eskiden en yeniye";
+  const picked = activityPicked.size;
+  const apply = canSelect && picked ? `<button type="button" data-act="act-apply">Uygula (${picked})</button>` : "";
+  const select = canSelect ? `<button type="button" data-act="act-select-mode">${activitySelect ? "Vazgeç" : "Seç"}</button>` : "";
+  return `<div class="activity-tools"><button type="button" data-act="act-sort">${label}</button><span>${apply}${select}</span></div>`;
+}
+
+function activityTiles(items) {
+  if (!items.length) return "";
+  return `<div class="grid activity-grid">${items.map((item) => {
+    const src = safeSrc(item.images?.[0] || item.poster || item.image || "");
+    const id = esc(item.id);
+    if (activitySelect) {
+      const picked = activityPicked.has(item.id);
+      return `<button type="button" class="tile-btn${picked ? " picked" : ""}" data-act="act-pick" data-id="${id}">${src ? `<img src="${src}" alt="">` : ""}${picked ? `<i class="pick-mark"></i>` : ""}</button>`;
+    }
+    const href = item.src ? `#/reels/${id}` : `#/g/${id}`;
+    return `<a href="${href}">${src ? `<img src="${src}" alt="">` : ""}${tileMeta(item)}</a>`;
+  }).join("")}</div>`;
+}
+
+function orderBy(items) {
+  return activitySort === "old" ? [...items].reverse() : items;
+}
+
+function activityScreen(section) {
+  const key = ["yorum", "paylasim", "hikaye", "deger", "gonderi", "reel", "one", "gecmis"].includes(section) ? section : "begeni";
+  const group = ["gonderi", "reel", "one"].includes(key) ? "media" : key === "gecmis" ? "history" : "social";
+  const side = [
+    ["social", "#/hareket", "Etkileşimler", "Beğenmeler, yorumlar ve diğer etkileşimlerin gözden geçir.", "heart"],
+    ["media", "#/hareket/gonderi", "Fotoğraflar ve videolar", "Paylaştığın fotoğrafları ve videoları görüntüle veya arşivle.", "grid"],
+    ["history", "#/hareket/gecmis", "Hesap geçmişi", "Hesabında yaptığın değişiklikleri gözden geçir.", "clock"],
+  ].map(([id, href, title, text, glyph]) => `<a href="${href}" class="${group === id ? "on" : ""}">${icon(glyph)}<span><strong>${title}</strong><small>${text}</small></span></a>`).join("");
+  let tabs = "";
+  let tools = "";
+  let body = "";
+  if (group === "social") {
+    const tabDefs = [
+      ["begeni", "Beğenmeler", "#/hareket"],
+      ["yorum", "Yorumlar", "#/hareket/yorum"],
+      ["paylasim", "Yeniden paylaşılanlar", "#/hareket/paylasim"],
+      ["hikaye", "Hikaye yanıtları", "#/hareket/hikaye"],
+      ["deger", "Değerlendirmeler", "#/hareket/deger"],
+    ];
+    tabs = `<nav class="activity-tabs">${tabDefs.map(([id, label, href]) => `<a href="${href}" class="${key === id ? "on" : ""}">${label}</a>`).join("")}</nav>`;
+    if (key === "begeni") {
+      const items = orderBy(store.likedMedia());
+      tools = activityTools(true);
+      body = items.length ? activityTiles(items) : `<p class="activity-empty">Beğenme yok.</p>`;
+    } else if (key === "yorum") {
+      const rows = orderBy(store.ownComments());
+      tools = activityTools(false);
+      body = rows.length ? rows.map((comment) => {
+        const src = safeSrc(comment.image);
+        const href = comment.reel ? `#/reels/${comment.postId}` : `#/g/${comment.postId}`;
+        return `<a class="act-row" href="${href}">${avatar(getUser(ME), 44)}<span class="copy"><strong>${esc(ME)}</strong><em>${esc(comment.text)}</em><time>${timeAgo(comment.at)}</time></span>${src ? `<img src="${src}" alt="">` : ""}</a>`;
+      }).join("") : `<p class="activity-empty">Yorum yok.</p>`;
+    } else if (key === "hikaye") {
+      const rows = orderBy(store.storyReplies());
+      tools = activityTools(false);
+      body = rows.length ? rows.map((item) => {
+        const user = getUser(item.user);
+        return `<div class="act-row">${user ? avatar(user, 44) : ""}<span class="copy"><strong>${esc(item.user)}</strong><em>${esc(item.text)}</em><time>${timeAgo(item.at)}</time></span></div>`;
+      }).join("") : `<p class="activity-empty">Hikaye yanıtı yok.</p>`;
+    } else if (key === "paylasim") {
+      body = `<p class="activity-empty">Yeniden paylaşım yok.</p>`;
+    } else {
+      body = `<p class="activity-empty">Değerlendirme hareketi yok.</p>`;
+    }
+  } else if (group === "media") {
+    const tabDefs = [
+      ["gonderi", "Gönderiler", "#/hareket/gonderi"],
+      ["reel", "Reels", "#/hareket/reel"],
+      ["one", "Öne çıkanlar", "#/hareket/one"],
+    ];
+    tabs = `<nav class="activity-tabs">${tabDefs.map(([id, label, href]) => `<a href="${href}" class="${key === id ? "on" : ""}">${label}</a>`).join("")}</nav>`;
+    if (key === "one") {
+      const lights = store.highlightsFor(ME);
+      body = lights.length ? `<div class="highlights desk-highlights">${lights.map((item) => `<a href="#/h/${item.id}/0"><span class="hl"><img src="${safeSrc(item.cover)}" alt=""></span>${esc(item.title)}</a>`).join("")}</div>` : `<p class="activity-empty">Öne çıkan yok.</p>`;
+    } else {
+      const items = orderBy(key === "reel" ? store.reelsBy(ME) : store.postsBy(ME));
+      tools = activityTools(key === "gonderi");
+      body = items.length ? activityTiles(items) : `<p class="activity-empty">Burada henüz bir şey yok.</p>`;
+    }
+  } else {
+    const items = store.accountHistory();
+    const year = new Date().getFullYear();
+    const groups = [["Bu yıl", items.filter((item) => new Date(item.at).getFullYear() === year)], ["Daha öncekiler", items.filter((item) => new Date(item.at).getFullYear() !== year)]];
+    const when = (at) => (Date.now() - at > 28 * 86400000 ? new Date(at).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" }) : timeAgo(at));
+    body = groups.filter(([, list]) => list.length).map(([title, list]) => `<h2 class="history-year">${title}</h2>${list.map((item) => `<div class="history-row"><strong>${esc(item.label)}</strong><span>${esc(item.detail)}</span><time>${when(item.at)}</time></div>`).join("")}`).join("") || `<p class="activity-empty">Hesap geçmişi yok.</p>`;
+  }
+  return `<section class="activity-box"><aside class="activity-side"><h1>Hareketlerin</h1>${side}</aside><div class="activity-main">${tabs}${tools}${body}</div></section>`;
+}
+
+function tileMeta(item) {
+  return `<span class="tile-meta">${icon("heartFill")} ${formatCount(store.likeCount(item))} ${icon("comment")} ${formatCount(store.commentsFor(item).length)}</span>`;
+}
+
 function photoGrid(items) {
   if (!items.length) return `<p class="empty">Burada henüz bir şey yok.</p>`;
   return `<div class="grid">${items.map((post) => {
     const src = safeSrc(post.images?.[0] || "");
-    return `<a href="#/g/${post.id}">${src ? `<img src="${src}" alt="${esc(post.alt || "")}" loading="lazy">` : ""}</a>`;
+    return `<a href="#/g/${post.id}">${src ? `<img src="${src}" alt="${esc(post.alt || "")}" loading="lazy">` : ""}${tileMeta(post)}</a>`;
   }).join("")}</div>`;
 }
 
@@ -515,7 +645,7 @@ function reelGrid(items) {
   if (!items.length) return `<p class="empty">Henüz reel yok.</p>`;
   return `<div class="grid">${items.map((reel) => {
     const src = safeSrc(reel.poster || reel.image || "");
-    return `<a class="reel-tile" href="#/reels/${reel.id}">${src ? `<img src="${src}" alt="">` : ""}<span>${icon("play")}</span></a>`;
+    return `<a class="reel-tile" href="#/reels/${reel.id}">${src ? `<img src="${src}" alt="">` : ""}<span class="play-badge">${icon("play")}</span>${tileMeta(reel)}</a>`;
   }).join("")}</div>`;
 }
 
@@ -738,6 +868,11 @@ function screen(r) {
     return `<div class="panon page"><strong>Panon</strong><p>${formatCount(posts.length)} gönderi</p><p>${formatCount(likes)} beğenme</p><p>${formatCount(store.followerCount(getUser(ME)))} takipçi</p><p class="hint">Bu sayılar bu telefondaki hesaba ait.</p></div>`;
   }
   if (r.head === "kaydedilenler") return photoGrid(store.savedPosts());
+  if (r.head === "arsiv") {
+    const hidden = store.hiddenPosts();
+    return hidden.length ? photoGrid(hidden) : `<p class="empty">Arşiv boş.</p>`;
+  }
+  if (r.head === "hareket") return activityScreen(r.parts[1] || "begeni");
   if (r.head === "b") {
     const post = store.postById(r.parts[1]);
     if (!post) return missing("Bu gönderi yok.");
@@ -798,11 +933,19 @@ function render() {
   const r = route();
   if (r.head === "bildirim") store.seeActivity();
   const behindFeed = isDesktop() && r.head === "yeni" && (!r.parts[1] || r.parts[1] === "gonderi");
+  const section = r.head === "hareket" ? (r.parts[1] || "begeni") : "";
+  if (section !== activitySection) {
+    activitySelect = false;
+    activityPicked.clear();
+    activitySection = section;
+  }
   app.classList.toggle("reels-mode", r.head === "reels");
   app.classList.toggle("immersive", r.head === "h");
   app.classList.toggle("home", r.head === "akis" || behindFeed);
   app.classList.toggle("show-rail", r.head === "akis" || behindFeed);
-  app.classList.toggle("wide", ["profil", "u", "kesfet", "kaydedilenler", "mesaj", "bildirim"].includes(r.head));
+  app.classList.toggle("wide", ["profil", "u", "kesfet", "kaydedilenler", "arsiv", "hareket"].includes(r.head));
+  app.classList.toggle("desk-page", isDesktop() && ["profil", "u", "hareket"].includes(r.head));
+  app.classList.toggle("activity", r.head === "hareket");
   paintTop(r);
   const showTabs = rootTab(r);
   tabbar.hidden = !showTabs;
@@ -816,6 +959,13 @@ function render() {
   composer.innerHTML = bar;
   stage.innerHTML = screen(r);
   paintModal(r);
+  const pill = document.getElementById("msgpill");
+  const showPill = isDesktop() && r.head !== "reels" && r.head !== "h" && r.head !== "mesaj";
+  pill.hidden = !showPill;
+  if (showPill) {
+    const mail = store.unreadTotal();
+    pill.innerHTML = `${icon("send")}<span>Mesajlar</span>${mail ? `<i class="count">${mail}</i>` : ""}`;
+  }
   const stick = pinBottom || (r.head === "mesaj" && r.parts[1]);
   pinBottom = false;
   stage.scrollTop = stick ? stage.scrollHeight : (scrollMem.get(next) || 0);
@@ -1079,6 +1229,7 @@ function openSheet(html) {
 function closeSheet() {
   const sheet = document.getElementById("sheet");
   if (sheet) sheet.innerHTML = "";
+  document.getElementById("sidenav")?.classList.remove("expanded");
 }
 
 function shareItem(id, kind) {
@@ -1229,6 +1380,15 @@ function shiftCarousel(id, direction) {
 let lastTap = { id: "", at: 0 };
 let swipe = null;
 
+function openProfileMenu() {
+  if (!isDesktop()) {
+    openSheet(`<div class="grab"></div><a href="#/hareket">Hareketlerin</a><a href="#/kaydedilenler">Kaydedilenler</a><a href="#/arsiv">Arşiv</a><a href="#/ayarlar">Ayarlar</a><button type="button" data-act="close-sheet">Vazgeç</button>`);
+    return;
+  }
+  document.getElementById("sidenav")?.classList.add("expanded");
+  document.getElementById("sheet").innerHTML = `<button type="button" class="menu-backdrop" data-act="close-sheet" aria-label="Kapat"></button><div class="more-menu" role="menu"><a href="#/ayarlar"><span>Ayarlar</span></a><a href="#/hareket"><span>Hareketlerin</span></a><a href="#/kaydedilenler"><span>Kaydedilenler</span></a><button type="button" data-act="theme-toggle"><span>Görünümü değiştir</span></button><button type="button" data-act="add-account"><span>Hesap değiştir</span></button><button type="button" class="danger" data-act="reset-ask"><span>Çıkış yap</span></button></div>`;
+}
+
 document.body.addEventListener("click", (event) => {
   const zone = event.target.closest("[data-act]");
   const hit = event.target.closest(".frame, .reel");
@@ -1362,7 +1522,35 @@ document.body.addEventListener("click", (event) => {
   } else if (act === "add-account") {
     toast("Bu telefonda tek profil var");
   } else if (act === "profile-menu") {
-    openSheet(`<div class="grab"></div><a href="#/kaydedilenler">Kaydedilenler</a><a href="#/ayarlar">Ayarlar</a><button type="button" data-act="close-sheet">Vazgeç</button>`);
+    openProfileMenu();
+  } else if (act === "theme-toggle") {
+    const dark = document.documentElement.dataset.theme === "dark";
+    store.setTheme(dark ? "light" : "dark");
+    render();
+    toast(dark ? "Aydınlık görünüm" : "Karanlık görünüm");
+  } else if (act === "act-sort") {
+    activitySort = activitySort === "new" ? "old" : "new";
+    render();
+  } else if (act === "act-select-mode") {
+    activitySelect = !activitySelect;
+    if (!activitySelect) activityPicked.clear();
+    render();
+  } else if (act === "act-pick") {
+    const id = safeId(zone.dataset.id);
+    if (!id) return;
+    if (activityPicked.has(id)) activityPicked.delete(id);
+    else activityPicked.add(id);
+    render();
+  } else if (act === "act-apply") {
+    const mode = route().parts[1] || "begeni";
+    for (const id of activityPicked) {
+      if (mode === "begeni" && store.liked(id)) store.toggleLike(id);
+      if (mode === "gonderi") store.hidePost(id);
+    }
+    activityPicked.clear();
+    activitySelect = false;
+    render();
+    toast(mode === "gonderi" ? "Arşive alındı" : "Beğeni kaldırıldı");
   } else if (act === "theme") {
     store.setTheme(zone.dataset.theme);
     render();
@@ -1449,6 +1637,7 @@ document.body.addEventListener("submit", (event) => {
     const userId = form.dataset.user;
     if (userId && userId !== ME && getUser(userId)) {
       store.sendMessage(userId, text.slice(0, 500));
+      store.addStoryReply(userId, text.slice(0, 500));
       toast("Yanıt gönderildi");
       form.reset();
     }

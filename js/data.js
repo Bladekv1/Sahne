@@ -681,6 +681,18 @@ export const activity = [
   { id: "a6", user: "nisa.film", type: "like", postId: "p16", text: "gönderini beğendi", at: h(20) },
 ];
 
+export const seedLikes = ["p1", "p4", "p6", "p8", "p12", "p15"];
+
+export const storyReplies = [
+  { id: "sr1", user: "deniz.studio", text: "Işık tam yerinde.", at: h(3) },
+  { id: "sr2", user: "ayse.tabak", text: "Tabak duruyor.", at: h(9) },
+];
+
+export const accountHistory = [
+  { id: "ah1", label: "Biyografi", detail: "yazılım · istanbul", at: h(240) },
+  { id: "ah2", label: "Kullanıcı adı", detail: "bladekv1", at: Date.UTC(2024, 4, 12) },
+];
+
 export const topics = ["Tümü", "İstanbul", "Yemek", "Yol", "Tasarım", "Müzik", "Kod", "Deniz"];
 
 export const suggestions = ["elif.yurur", "nisa.film", "kerem.not"];

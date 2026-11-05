@@ -22,6 +22,7 @@ const paths = {
   menu: '<path d="M5 7h14M5 12h14M5 17h14"/>',
   bell: '<path d="M6 16V10a6 6 0 1 1 12 0v6l1.2 2H4.8L6 16Z"/><path d="M10 18a2 2 0 0 0 4 0"/>',
   play: '<path d="M8 6.5v11l10-5.5-10-5.5Z" fill="currentColor" stroke="none"/>',
+  clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/>',
 };
 
 export function icon(name) {
