@@ -25,13 +25,18 @@ const topbar = document.getElementById("topbar");
 const tabbar = document.getElementById("tabbar");
 const composer = document.getElementById("composer");
 
+function safeId(value) {
+  const id = String(value ?? "");
+  return /^[a-z0-9._-]{1,64}$/i.test(id) ? id : "";
+}
+
 function route() {
   const hash = location.hash || "#/";
   let path = hash.slice(1);
   if (!path.startsWith("/")) path = `/${path}`;
   const parts = path.split("/").filter(Boolean).map((part) => {
-    try { return decodeURIComponent(part); } catch { return part; }
-  });
+    try { return safeId(decodeURIComponent(part)); } catch { return ""; }
+  }).filter(Boolean);
   return { hash, head: parts[0] || "akis", parts };
 }
 
@@ -64,7 +69,14 @@ function avatar(user, size, dot = false) {
 }
 
 function profileHref(id) {
-  return id === ME ? "#/profil" : `#/u/${id}`;
+  const safe = safeId(id);
+  if (!safe || safe === ME) return "#/profil";
+  return `#/u/${safe}`;
+}
+
+function safeHash(href) {
+  const value = String(href ?? "");
+  return /^#\/[a-z0-9._/-]*$/i.test(value) && value.length <= 120 ? value : "#/";
 }
 
 function tabBar(r) {
@@ -88,7 +100,7 @@ function tabBar(r) {
 }
 
 function subBar(title, href) {
-  return `<a class="icon-btn" href="${href}" aria-label="Geri">${icon("back")}</a><h1>${esc(title)}</h1><span></span>`;
+  return `<a class="icon-btn" href="${esc(safeHash(href))}" aria-label="Geri">${icon("back")}</a><h1>${esc(title)}</h1><span></span>`;
 }
 
 function paintTop(r) {
@@ -144,9 +156,9 @@ function paintTop(r) {
     duzenle: ["Profili düzenle", "#/profil"],
     ayarlar: ["Ayarlar", "#/profil"],
     kaydedilenler: ["Kaydedilenler", "#/profil"],
-    b: ["Beğenenler", `#/g/${r.parts[1] || ""}`],
-    takipci: ["Takipçi", profileHref(r.parts[1] || ME)],
-    takip: ["Takip", profileHref(r.parts[1] || ME)],
+    b: ["Beğenenler", safeId(r.parts[1]) ? `#/g/${safeId(r.parts[1])}` : "#/"],
+    takipci: ["Takipçi", profileHref(safeId(r.parts[1]) || ME)],
+    takip: ["Takip", profileHref(safeId(r.parts[1]) || ME)],
   };
   if (r.head === "yeni") {
     const names = { gonderi: "Yeni gönderi", hikaye: "Yeni hikaye", reel: "Yeni reel" };
