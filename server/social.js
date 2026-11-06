@@ -44,11 +44,32 @@ function fail(status, message) {
   throw error;
 }
 
+function mediaRef(src) {
+  const value = String(src || "");
+  const match = /^\/api\/media\/([a-f0-9]{32})$/.exec(value) || /^\/api\/media\?id=([a-f0-9]{32})$/.exec(value);
+  return match ? match[1] : "";
+}
+
 function publicSrc(src) {
   const value = String(src || "");
   if (/^media\/(?:photos|reels|avatars|icons)\/[a-z0-9._-]+$/i.test(value)) return value;
-  if (/^\/api\/media\/[a-f0-9]{32}$/.test(value)) return value;
-  return "";
+  const id = mediaRef(value);
+  return id ? `/api/media?id=${id}` : "";
+}
+
+function requestedMediaId(req, pathname) {
+  if (req.method !== "GET" && req.method !== "HEAD") return "";
+  if (pathname.startsWith("/api/media/")) {
+    const id = pathname.slice("/api/media/".length);
+    return MEDIA_ID.test(id) ? id : "";
+  }
+  if (pathname !== "/api/media") return "";
+  try {
+    const id = new URL(req.url || "/", "http://localhost").searchParams.get("id") || "";
+    return MEDIA_ID.test(id) ? id : "";
+  } catch {
+    return "";
+  }
 }
 
 function cleanUser(value) {
@@ -849,9 +870,11 @@ async function updateProfile(req, res, send, currentAccount) {
   if (link && !/^https:\/\/\S+$/.test(link)) fail(400, "Bağlantı https ile başlamalı.");
   let avatar = body.avatar == null ? row.avatar || "" : String(body.avatar || "");
   if (avatar && !publicSrc(avatar)) fail(400, "Fotoğraf yüklenemedi.");
-  if (avatar.startsWith("/api/media/")) {
-    const owned = await ownedMedia(account.id, avatar.slice("/api/media/".length));
+  const uploadedAvatar = mediaRef(avatar);
+  if (uploadedAvatar) {
+    const owned = await ownedMedia(account.id, uploadedAvatar);
     if (!owned || !owned.mime.startsWith("image/")) fail(400, "Fotoğraf yüklenemedi.");
+    avatar = `/api/media/${uploadedAvatar}`;
   }
   if (body.name != null) await sql("update accounts set name = $1 where id = $2", [name, account.id]);
   await sql(
@@ -872,25 +895,25 @@ async function updateProfile(req, res, send, currentAccount) {
 
 export async function handleSocial(req, res, pathname, ctx) {
   const { send, currentAccount } = ctx;
-  const mediaId = req.method === "GET" && pathname.startsWith("/api/media/") ? pathname.slice("/api/media/".length) : "";
+  const mediaId = requestedMediaId(req, pathname);
   const route = req.method === "GET" && pathname === "/api/world" ? () => sendWorld(req, res, send, currentAccount)
     : mediaId ? () => sendMedia(req, res, mediaId, currentAccount)
       : req.method === "POST" && pathname === "/api/media" ? () => upload(req, res, send, currentAccount)
         : req.method === "POST" && pathname === "/api/posts" ? () => createPost(req, res, send, currentAccount)
-          : req.method === "POST" && pathname === "/api/posts/delete" ? () => removePost(req, res, send, currentAccount)
-            : req.method === "POST" && pathname === "/api/posts/hide" ? () => hidePost(req, res, send, currentAccount)
+          : req.method === "POST" && (pathname === "/api/posts/delete" || pathname === "/api/post-delete") ? () => removePost(req, res, send, currentAccount)
+            : req.method === "POST" && (pathname === "/api/posts/hide" || pathname === "/api/post-hide") ? () => hidePost(req, res, send, currentAccount)
               : req.method === "POST" && pathname === "/api/like" ? () => setLike(req, res, send, currentAccount)
                 : req.method === "POST" && pathname === "/api/save" ? () => setSave(req, res, send, currentAccount)
                   : req.method === "POST" && pathname === "/api/follow" ? () => setFollow(req, res, send, currentAccount)
-                    : req.method === "POST" && pathname === "/api/follow/accept" ? () => acceptFollow(req, res, send, currentAccount)
-                      : req.method === "POST" && pathname === "/api/follow/reject" ? () => rejectFollow(req, res, send, currentAccount)
+                    : req.method === "POST" && (pathname === "/api/follow/accept" || pathname === "/api/follow-accept") ? () => acceptFollow(req, res, send, currentAccount)
+                      : req.method === "POST" && (pathname === "/api/follow/reject" || pathname === "/api/follow-reject") ? () => rejectFollow(req, res, send, currentAccount)
                     : req.method === "POST" && pathname === "/api/comments" ? () => addComment(req, res, send, currentAccount)
-                      : req.method === "POST" && pathname === "/api/comments/delete" ? () => removeComment(req, res, send, currentAccount)
+                      : req.method === "POST" && (pathname === "/api/comments/delete" || pathname === "/api/comment-delete") ? () => removeComment(req, res, send, currentAccount)
                         : req.method === "POST" && pathname === "/api/messages" ? () => sendMessage(req, res, send, currentAccount)
                           : req.method === "POST" && pathname === "/api/read" ? () => markRead(req, res, send, currentAccount)
                             : req.method === "POST" && pathname === "/api/stories" ? () => addStory(req, res, send, currentAccount)
-                              : req.method === "POST" && pathname === "/api/stories/seen" ? () => seeStory(req, res, send, currentAccount)
-                                : req.method === "POST" && pathname === "/api/stories/reply" ? () => replyStory(req, res, send, currentAccount)
+                              : req.method === "POST" && (pathname === "/api/stories/seen" || pathname === "/api/story-seen") ? () => seeStory(req, res, send, currentAccount)
+                                : req.method === "POST" && (pathname === "/api/stories/reply" || pathname === "/api/story-reply") ? () => replyStory(req, res, send, currentAccount)
                                   : req.method === "POST" && pathname === "/api/profile" ? () => updateProfile(req, res, send, currentAccount)
                                     : null;
   if (!route) return false;

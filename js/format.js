@@ -39,7 +39,10 @@ export function timeAgo(timestamp) {
 }
 
 function mediaUrl(src) {
-  return /^\/api\/media\/[a-f0-9]{32}$/.test(src);
+  const path = /^\/api\/media\/([a-f0-9]{32})$/.exec(src);
+  if (path) return `/api/media?id=${path[1]}`;
+  if (/^\/api\/media\?id=[a-f0-9]{32}$/.test(src)) return src;
+  return "";
 }
 
 export function safeSrc(src) {
@@ -47,14 +50,12 @@ export function safeSrc(src) {
   if (src.startsWith("media/")) return src;
   if (src.startsWith("data:image/")) return src;
   if (src.startsWith("blob:")) return src;
-  if (mediaUrl(src)) return src;
-  return "";
+  return mediaUrl(src);
 }
 
 export function safeVideo(src) {
   if (typeof src !== "string") return "";
   if (src.startsWith("media/reels/") && src.endsWith(".mp4")) return src;
   if (src.startsWith("blob:")) return src;
-  if (mediaUrl(src)) return src;
-  return "";
+  return mediaUrl(src);
 }

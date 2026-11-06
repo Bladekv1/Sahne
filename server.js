@@ -526,8 +526,8 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && pathname === "/api/password") return changePassword(req, res);
   if (req.method === "POST" && pathname === "/api/verify") return applyVerify(req, res);
-  if (req.method === "GET" && pathname === "/api/admin/requests") return adminRequests(req, res);
-  if (req.method === "POST" && pathname === "/api/admin/review") return review(req, res);
+  if (req.method === "GET" && (pathname === "/api/admin/requests" || pathname === "/api/admin-requests")) return adminRequests(req, res);
+  if (req.method === "POST" && (pathname === "/api/admin/review" || pathname === "/api/admin-review")) return review(req, res);
   return send(res, 404, { error: "Bulunamadı." });
 }
 

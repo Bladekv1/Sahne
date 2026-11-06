@@ -507,7 +507,7 @@ export function answerFollow(id, accept) {
     self.followers = (self.followers || 0) + 1;
     self.followerIds = [...new Set([...(self.followerIds || []), id])];
   }
-  track(() => postJson(accept ? "/api/follow/accept" : "/api/follow/reject", { id })).then((data) => {
+  track(() => postJson(accept ? "/api/follow-accept" : "/api/follow-reject", { id })).then((data) => {
     if (data?.error) notify(data.error);
     lastWorld = "";
   });
@@ -525,7 +525,7 @@ export function bioOf(user) {
 
 export function avatarOf(user) {
   const picture = (user.id === me() && state.profile.avatar) || user.avatar || "";
-  if (picture.startsWith("/api/media/") || picture.startsWith("media/") || picture.startsWith("data:image/")) return picture;
+  if (picture.startsWith("/api/media/") || picture.startsWith("/api/media?") || picture.startsWith("media/") || picture.startsWith("data:image/")) return picture;
   if (user.local || user.sample === false) {
     const letter = (user.name || user.id || "?").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 1).toLocaleUpperCase("tr-TR") || "?";
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#262626"/><text x="40" y="52" text-anchor="middle" font-family="Georgia,serif" font-size="34" fill="#fff">${letter}</text></svg>`;
@@ -668,7 +668,7 @@ export function storyReplies() {
 export function addStoryReply(userId, text, storyId) {
   const story = world.stories.find((item) => item.user === userId);
   const frameId = storyId || story?.frames?.[0]?.id || "";
-  if (frameId) track(() => postJson("/api/stories/reply", { storyId: frameId, text }));
+  if (frameId) track(() => postJson("/api/story-reply", { storyId: frameId, text }));
   return { id: frameId, user: userId, text, at: Date.now() };
 }
 
@@ -682,7 +682,7 @@ export function postById(id) {
 
 export function hidePost(id) {
   state.hidden[id] = true;
-  track(() => postJson("/api/posts/hide", { id })).then((data) => {
+  track(() => postJson("/api/post-hide", { id })).then((data) => {
     if (data?.error) notify(data.error);
   });
 }
@@ -692,7 +692,7 @@ export function deleteOwnPost(id) {
   if (!item || item.user !== me()) return;
   world.posts = world.posts.filter((post) => post.id !== id);
   world.reels = world.reels.filter((reel) => reel.id !== id);
-  track(() => postJson("/api/posts/delete", { id })).then((data) => {
+  track(() => postJson("/api/post-delete", { id })).then((data) => {
     if (data?.error) notify(data.error);
   });
 }
@@ -724,7 +724,7 @@ export function addComment(postId, text) {
 export function deleteComment(postId, commentId) {
   const item = findItem(postId);
   if (item) item.comments = (item.comments || []).filter((comment) => comment.id !== commentId);
-  track(() => postJson("/api/comments/delete", { id: commentId })).then((data) => {
+  track(() => postJson("/api/comment-delete", { id: commentId })).then((data) => {
     if (data?.error) notify(data.error);
   });
 }
@@ -753,7 +753,7 @@ export function seeFrame(userId, frameId) {
   if (seen[frameId]) return;
   seen[frameId] = true;
   state.seen[userId] = seen;
-  track(() => postJson("/api/stories/seen", { id: frameId }));
+  track(() => postJson("/api/story-seen", { id: frameId }));
 }
 
 export function storyRow() {

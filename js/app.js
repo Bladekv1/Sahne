@@ -937,7 +937,7 @@ function verifyScreen() {
 function loadAdmin() {
   if (adminState.status === "loading") return;
   adminState = { ...adminState, status: "loading" };
-  fetch("/api/admin/requests", { credentials: "same-origin" })
+  fetch("/api/admin-requests", { credentials: "same-origin" })
     .then(async (response) => {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Başvurular açılmadı.");
@@ -1753,7 +1753,7 @@ document.body.addEventListener("click", (event) => {
   } else if (act === "review-verify") {
     const id = zone.dataset.id || "";
     const status = zone.dataset.status || "";
-    fetch("/api/admin/review", {
+    fetch("/api/admin-review", {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
