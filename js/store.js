@@ -644,8 +644,8 @@ export async function loginAccount(ident, password) {
   return { ok: true, created: Boolean(data.created) };
 }
 
-export async function resetPassword({ username, born, password }) {
-  const data = await postJson("/api/password", { username, born, password });
+export async function changePassword({ current, next }) {
+  const data = await postJson("/api/password", { current, next });
   if (data.error) return data;
   return { ok: true };
 }

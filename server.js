@@ -9,9 +9,10 @@ import { sql } from "./server/db.js";
 
 const pbkdf2Async = promisify(pbkdf2);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const reserved = new Set(seedUsers.map((user) => user.id).filter((id) => id !== ownerId));
+const reserved = new Set(seedUsers.map((user) => user.id));
 const categories = new Set(["Kişi", "Yaratıcı", "İşletme"]);
 const attempts = new Map();
+let globalWindow = { count: 0, until: 0 };
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -40,19 +41,21 @@ function sameOrigin(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
   try {
-    return new URL(origin).host === (req.headers["x-forwarded-host"] || req.headers.host);
+    return new URL(origin).host === req.headers.host;
   } catch {
     return false;
   }
 }
 
 function clientKey(req) {
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
-  return forwarded || req.socket.remoteAddress || "local";
+  return req.socket.remoteAddress || "local";
 }
 
 function limited(req) {
   const now = Date.now();
+  if (globalWindow.until < now) globalWindow = { count: 0, until: now + 10 * 60 * 1000 };
+  globalWindow.count += 1;
+  if (globalWindow.count > 80) return true;
   const key = clientKey(req);
   const slot = attempts.get(key);
   if (!slot || slot.until < now) {
@@ -60,7 +63,7 @@ function limited(req) {
     return false;
   }
   slot.count += 1;
-  return slot.count > 30;
+  return slot.count > 8;
 }
 
 async function readJson(req) {
@@ -88,7 +91,12 @@ async function readJson(req) {
 function cookieToken(req) {
   const header = String(req.headers.cookie || "");
   const match = header.split(";").map((part) => part.trim()).find((part) => part.startsWith("blade_session="));
-  return match ? decodeURIComponent(match.slice("blade_session=".length)) : "";
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match.slice("blade_session=".length));
+  } catch {
+    return "";
+  }
 }
 
 function sessionCookie(token, req) {
@@ -220,22 +228,8 @@ async function login(req, res) {
   const body = await readJson(req);
   const ident = cleanId(body.id);
   const password = String(body.password || "");
-  const username = /^[a-z0-9._]{3,30}$/.test(ident) ? ident : "";
-  let account = await findAccount(ident);
-  if (!account && username === ownerId) {
-    if (password.length < 8) return send(res, 400, { error: "bladekv1 ilk girişte kurulur. Şifre en az 8 karakter olmalı." });
-    const made = await createAccount({
-      id: ownerId,
-      name: "Blade",
-      contact: "",
-      born: "",
-      password,
-      verified: true,
-      role: "admin",
-    });
-    if (made) return openSession(res, req, made, true);
-    account = await findAccount(ownerId);
-  }
+  const account = await findAccount(ident);
+  if (!account && ident === ownerId) return send(res, 401, { error: "Yönetici hesabı henüz hazır değil." });
   if (!account) return send(res, 401, { error: "Bu hesap yok. Kaydol." });
   if (password.length < 8) return send(res, 401, { error: "Şifre yanlış." });
   const actual = await hashPassword(password, Buffer.from(String(account.salt), "hex"));
@@ -259,35 +253,68 @@ async function register(req, res) {
   if (!validBorn(born)) return send(res, 400, { error: "Doğum günü 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 or (contact <> '' and contact = $2) limit 1", [id, contact]);
   if (existing.length) return send(res, 409, { error: "Bu hesap zaten kayıtlı. Giriş yap." });
-  const owner = id === ownerId;
   const account = await createAccount({
     id,
     name,
     contact,
     born,
     password,
-    verified: owner,
-    role: owner ? "admin" : "user",
+    verified: false,
+    role: "user",
   });
   if (!account) return send(res, 409, { error: "Bu hesap zaten kayıtlı. Giriş yap." });
   return openSession(res, req, account, true);
 }
 
-async function resetPassword(req, res) {
+async function changePassword(req, res) {
   if (limited(req)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  const sessionAccount = await currentAccount(req);
+  if (!sessionAccount) return send(res, 401, { error: "Önce giriş yap." });
+  const account = await findAccount(sessionAccount.id);
+  if (!account) return send(res, 401, { error: "Önce giriş yap." });
   const body = await readJson(req);
-  const id = String(body.username || "").trim().toLowerCase();
-  const born = String(body.born || "");
-  const password = String(body.password || "");
-  const rows = await sql("select id, born from accounts where id = $1", [id]);
-  const account = rows[0];
-  if (!account || !account.born || account.born !== born) return send(res, 400, { error: "Bilgiler eşleşmedi." });
-  if (password.length < 8) return send(res, 400, { error: "Yeni şifre en az 8 karakter olmalı." });
+  const current = String(body.current || "");
+  const next = String(body.next || "");
+  if (next.length < 8) return send(res, 400, { error: "Yeni şifre en az 8 karakter olmalı." });
+  const actual = await hashPassword(current, Buffer.from(String(account.salt), "hex"));
+  if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: "Şimdiki şifre yanlış." });
+  const salt = randomBytes(16);
+  const hash = await hashPassword(next, salt);
+  await sql("update accounts set salt = $1, hash = $2 where id = $3", [hex(salt), hash, account.id]);
+  send(res, 200, { ok: true });
+}
+
+async function ensureOwner() {
+  const password = String(process.env.BLADEKV1_OWNER_PASSWORD || "").trim();
+  if (password.length < 12) return;
+  const existing = await findAccount(ownerId);
+  if (!existing) {
+    await createAccount({
+      id: ownerId,
+      name: "Blade",
+      contact: "",
+      born: "",
+      password,
+      verified: true,
+      role: "admin",
+    });
+    return;
+  }
+  let same = false;
+  try {
+    const actual = await hashPassword(password, Buffer.from(String(existing.salt), "hex"));
+    same = passwordMatches(actual, existing.hash);
+  } catch {
+    same = false;
+  }
+  if (same && existing.role === "admin" && flag(existing.verified)) return;
   const salt = randomBytes(16);
   const hash = await hashPassword(password, salt);
-  await sql("update accounts set salt = $1, hash = $2 where id = $3", [hex(salt), hash, id]);
-  await sql("delete from sessions where account_id = $1", [id]);
-  send(res, 200, { ok: true });
+  await sql(
+    "update accounts set salt = $1, hash = $2, verified = true, role = 'admin' where id = $3",
+    [hex(salt), hash, ownerId],
+  );
+  await sql("delete from sessions where account_id = $1", [ownerId]);
 }
 
 async function applyVerify(req, res) {
@@ -379,7 +406,7 @@ async function handleApi(req, res, pathname) {
     if (token) await sql("delete from sessions where token_hash = $1", [tokenHash(token)]);
     return send(res, 200, { ok: true }, { "set-cookie": clearCookie() });
   }
-  if (req.method === "POST" && pathname === "/api/password") return resetPassword(req, res);
+  if (req.method === "POST" && pathname === "/api/password") return changePassword(req, res);
   if (req.method === "POST" && pathname === "/api/verify") return applyVerify(req, res);
   if (req.method === "GET" && pathname === "/api/admin/requests") return adminRequests(req, res);
   if (req.method === "POST" && pathname === "/api/admin/review") return review(req, res);
@@ -394,14 +421,28 @@ function blocked(pathname) {
 }
 
 function serveStatic(req, res, pathname) {
-  const requested = pathname === "/" ? "/index.html" : pathname;
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+  if (decoded.includes("\0") || decoded.includes("\\")) {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+  const requested = decoded === "/" ? "/index.html" : decoded;
   if (blocked(requested)) {
     res.writeHead(404);
     res.end();
     return;
   }
-  const file = path.normalize(path.join(root, decodeURIComponent(requested)));
-  if (!file.startsWith(root + path.sep) && file !== root) {
+  const file = path.resolve(root, requested.replace(/^\/+/, ""));
+  const relative = path.relative(root, file);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     res.writeHead(403);
     res.end();
     return;
@@ -422,7 +463,14 @@ function serveStatic(req, res, pathname) {
 
 const port = Number(process.env.PORT) || 8765;
 const server = createServer((req, res) => {
-  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  let pathname = "/";
+  try {
+    pathname = new URL(req.url || "/", "http://localhost").pathname;
+  } catch {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
   const run = pathname.startsWith("/api/") ? handleApi(req, res, pathname) : Promise.resolve(serveStatic(req, res, pathname));
   run.catch((error) => {
     const status = error.status || 500;
@@ -432,6 +480,7 @@ const server = createServer((req, res) => {
 });
 
 await sql("select 1 as ok");
+await ensureOwner();
 server.listen(port, "0.0.0.0", () => {
   console.log(`bladekv1 listening on ${port}`);
 });

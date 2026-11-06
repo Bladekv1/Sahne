@@ -265,6 +265,7 @@ function paintTop(r) {
     arsiv: ["Arşiv", "#/profil"],
     hareket: ["Hareketlerin", "#/profil"],
     girisler: ["Giriş hareketleri", "#/profil"],
+    sifre: ["Şifreyi değiştir", "#/ayarlar"],
     dogrulama: ["Mavi tik", "#/ayarlar"],
     yonetim: ["Başvurular", "#/ayarlar"],
     b: ["Beğenenler", safeId(r.parts[1]) ? `#/g/${safeId(r.parts[1])}` : "#/"],
@@ -829,6 +830,7 @@ function settingsScreen() {
   const sections = [
     ["Hesabın", [
       ["#/duzenle", "Profili düzenle", ""],
+      ["#/sifre", "Şifreyi değiştir", ""],
       ["#/kaydedilenler", "Kaydedilenler", ""],
       ["#/dogrulama", "Mavi tik başvurusu", store.isVerified(me()) ? "Var" : store.verifyRequest() === "pending" ? "İnceleniyor" : ""],
       ...(store.isAdmin() ? [["#/yonetim", "Başvuru paneli", ""]] : []),
@@ -860,6 +862,16 @@ function settingsScreen() {
     <button type="button" class="set-row" data-act="add-account"><span class="grow">Hesap değiştir</span></button>
     <button type="button" class="set-row danger" data-act="logout-ask"><span class="grow">Çıkış yap</span></button>
     <button type="button" class="set-row danger" data-act="reset-ask"><span class="grow">Verileri sil</span></button>`;
+}
+
+function passwordScreen() {
+  return `<form class="form-page" data-kind="password">
+    <h2>Şifreyi değiştir</h2>
+    <p class="hint">Şimdiki şifren gerekir. Doğum günüyle sıfırlama yok.</p>
+    <label>Şimdiki şifre<input name="current" type="password" autocomplete="current-password" minlength="8" required></label>
+    <label>Yeni şifre<input name="next" type="password" autocomplete="new-password" minlength="8" required></label>
+    <button class="btn primary" type="submit">Kaydet</button>
+  </form>`;
 }
 
 function verifyScreen() {
@@ -946,6 +958,7 @@ function screen(r) {
     return hidden.length ? photoGrid(hidden) : `<p class="empty">Arşiv boş.</p>`;
   }
   if (r.head === "hareket") return activityScreen(r.parts[1] || "begeni");
+  if (r.head === "sifre") return passwordScreen();
   if (r.head === "dogrulama") return verifyScreen();
   if (r.head === "yonetim") return adminScreen();
   if (r.head === "girisler") {
@@ -1018,10 +1031,10 @@ function authScreen() {
     return `<div class="gate">${hero}<section class="gate-card"><button type="button" class="text-btn" data-act="auth-login">Geri</button><h2>Kaydol</h2><form data-kind="signup"><input name="contact" type="text" inputmode="email" autocomplete="username" maxlength="80" placeholder="Cep telefonu veya e-posta" value="${esc(authDraft.contact)}" required><input name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Şifre" required><label class="born-label">Doğum günü<div class="born-row"><select name="day" aria-label="Gün" required><option value="">Gün</option>${days.map((day) => option(day, String(day), authDraft.day)).join("")}</select><select name="month" aria-label="Ay" required><option value="">Ay</option>${months.map((label, index) => option(index + 1, label, authDraft.month)).join("")}</select><select name="year" aria-label="Yıl" required><option value="">Yıl</option>${years.map((year) => option(year, String(year), authDraft.year)).join("")}</select></div></label><input name="name" type="text" maxlength="40" autocomplete="name" placeholder="Ad" value="${esc(authDraft.name)}" required><input name="username" type="text" maxlength="30" autocapitalize="none" autocomplete="off" placeholder="Kullanıcı adı" value="${esc(authDraft.username)}" required>${error}<button class="btn primary" type="submit">Kaydol</button></form><p class="gate-note">Hesap sunucuda durur. Şifre düz yazı olarak saklanmaz.</p></section></div>`;
   }
   if (authView === "forgot") {
-    return `<div class="gate">${hero}<section class="gate-card"><button type="button" class="text-btn" data-act="auth-login">Geri</button><h2>Şifreni yenile</h2><form data-kind="forgot"><input name="username" type="text" autocapitalize="none" placeholder="Kullanıcı adı" value="${esc(authDraft.username || authDraft.id)}" required><label class="born-label">Doğum günü<div class="born-row"><select name="day" aria-label="Gün" required><option value="">Gün</option>${days.map((day) => option(day, String(day), authDraft.day)).join("")}</select><select name="month" aria-label="Ay" required><option value="">Ay</option>${months.map((label, index) => option(index + 1, label, authDraft.month)).join("")}</select><select name="year" aria-label="Yıl" required><option value="">Yıl</option>${years.map((year) => option(year, String(year), authDraft.year)).join("")}</select></div></label><input name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Yeni şifre" required>${error}<button class="btn primary" type="submit">Şifreyi kaydet</button></form></section></div>`;
+    return `<div class="gate">${hero}<section class="gate-card"><button type="button" class="text-btn" data-act="auth-login">Geri</button><h2>Şifreni yenile</h2><p class="gate-note">Şifre doğum günüyle sıfırlanmaz. Giriş yaptıktan sonra Ayarlar’dan değiştirilir.</p></section></div>`;
   }
   const chips = known.length ? `<div class="gate-accounts">${known.map((account) => `<button type="button" data-act="auth-fill" data-user="${esc(account.id)}">${esc(account.id)}</button>`).join("")}</div>` : "";
-  return `<div class="gate">${hero}<section class="gate-card"><h2>Bladekv1</h2><form data-kind="login"><input name="id" type="text" autocapitalize="none" autocomplete="username" placeholder="Kullanıcı adı, e-posta veya telefon" value="${esc(authDraft.id)}" required><input name="password" type="password" autocomplete="current-password" placeholder="Şifre" required>${error}<button class="btn primary" type="submit">Giriş yap</button></form>${chips}<button type="button" class="text-btn" data-act="auth-forgot">Şifreni mi unuttun?</button><p class="gate-note">bladekv1 ilk girişte yazdığın şifreyle kurulur ve mavi tik alır. Şifre en az 8 karakter.</p><p class="gate-switch">Hesabın yok mu? <button type="button" data-act="auth-signup">Kaydol</button></p></section></div>`;
+  return `<div class="gate">${hero}<section class="gate-card"><h2>Bladekv1</h2><form data-kind="login"><input name="id" type="text" autocapitalize="none" autocomplete="username" placeholder="Kullanıcı adı, e-posta veya telefon" value="${esc(authDraft.id)}" required><input name="password" type="password" autocomplete="current-password" placeholder="Şifre" required>${error}<button class="btn primary" type="submit">Giriş yap</button></form>${chips}<button type="button" class="text-btn" data-act="auth-forgot">Şifreni mi unuttun?</button><p class="gate-note">Yönetici hesabı sunucuda açılır. Diğer hesaplar Kaydol ile açılır.</p><p class="gate-switch">Hesabın yok mu? <button type="button" data-act="auth-signup">Kaydol</button></p></section></div>`;
 }
 
 function paintGate() {
@@ -1817,22 +1830,27 @@ async function submitAuth(form, kind) {
       password: data.get("password")?.toString() || "",
       born: bornValue(data),
     });
-  } else {
-    result = await store.resetPassword({
-      username: data.get("username")?.toString() || "",
-      born: bornValue(data),
-      password: data.get("password")?.toString() || "",
+  } else if (kind === "password") {
+    result = await store.changePassword({
+      current: data.get("current")?.toString() || "",
+      next: data.get("next")?.toString() || "",
     });
     if (result.ok) {
-      authView = "login";
-      authDraft.id = data.get("username")?.toString() || "";
       authError = "";
-      toast("Şifre yenilendi. Giriş yap.");
+      toast("Şifre değişti");
+      location.hash = "#/ayarlar";
       render();
       return;
     }
+  } else {
+    result = { error: "Şifre doğum günüyle yenilenmez." };
   }
   if (!result.ok) {
+    if (kind === "password") {
+      toast(result.error || "Olmadı.");
+      render();
+      return;
+    }
     authError = result.error || "Olmadı.";
     render();
     return;
@@ -1849,7 +1867,7 @@ document.body.addEventListener("submit", (event) => {
   if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
   const kind = form.dataset.kind;
-  if (kind === "login" || kind === "signup" || kind === "forgot") {
+  if (kind === "login" || kind === "signup" || kind === "password") {
     submitAuth(form, kind);
     return;
   }
