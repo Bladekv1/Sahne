@@ -1,4 +1,4 @@
-import { everyone, getUser, suggestions, topics } from "./data.js";
+import { everyone, getUser, topics } from "./data.js";
 import { esc, formatCount, rich, safeSrc, safeVideo, timeAgo } from "./format.js";
 import { icon } from "./icons.js";
 import { getBlob, putBlob } from "./media.js";
@@ -175,14 +175,14 @@ function searchResultHtml() {
 
 function railHtml() {
   const self = getUser(me());
-  const people = suggestions.map((id) => getUser(id)).filter(Boolean);
+  const people = store.suggestPeople();
   return `<div class="rail-me">${avatar(self, 44)}<a href="#/profil"><strong>${esc(self.id)}</strong><small>${esc(store.displayName(self))}</small></a><a class="rail-switch" href="#/profil">Profil</a></div>
     <div class="rail-head"><span>Senin için önerilenler</span><a href="#/kesfet">Tümünü gör</a></div>
     ${people.map((user) => {
       const on = store.isFollowing(user.id);
       return `<div class="rail-person">${avatar(user, 32)}<a href="${profileHref(user.id)}"><strong>${userLabel(user.id)}</strong><small>Senin için öneriliyor</small></a><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip Et"}</button></div>`;
     }).join("")}
-    <p class="rail-foot">Bladekv1 · beğeniler ve mesajlar bu cihazda kalır</p>`;
+    <p class="rail-foot">Bladekv1 · gönderiler, beğeniler ve mesajlar herkese açık hesapta durur</p>`;
 }
 
 function tabBar(r) {
@@ -351,17 +351,20 @@ function storyStrip() {
     if (!user) return "";
     const seen = store.storySeen(pack) ? "seen" : "";
     const mine = pack.user === me();
-    return `<div class="story-slot"><a href="#/h/${pack.user}/${store.firstUnseen(pack)}" aria-label="${esc(mine ? "Hikayen" : user.name)}"><span class="ring ${seen}">${avatar(user, 56)}</span><b>${mine ? "Hikayen" : esc(user.id)}</b></a>${mine ? `<a class="add-badge" href="#/yeni/hikaye" aria-label="Hikaye ekle">${icon("plus")}</a>` : ""}</div>`;
+    const href = pack.frames.length ? `#/h/${pack.user}/${store.firstUnseen(pack)}` : "#/yeni/hikaye";
+    return `<div class="story-slot"><a href="${href}" aria-label="${esc(mine ? "Hikayen" : user.name)}"><span class="ring ${seen}">${avatar(user, 56)}</span><b>${mine ? "Hikayen" : esc(user.id)}</b></a>${mine ? `<a class="add-badge" href="#/yeni/hikaye" aria-label="Hikaye ekle">${icon("plus")}</a>` : ""}</div>`;
   }).join("")}</div>`;
 }
 
 function feedScreen() {
-  const cards = store.allPosts().map((post, index) => postCard(post, true).replace(
+  const posts = store.homePosts();
+  const cards = posts.map((post, index) => postCard(post, true).replace(
     index > 1 ? 'loading="eager"' : 'loading="eager"',
     index > 1 ? 'loading="lazy"' : 'loading="eager"',
   ));
-  const people = suggestions.map((id) => getUser(id)).filter(Boolean);
-  return `<p class="desk-label">Takip ettiklerin</p>${storyStrip()}${cards.join("")}<section class="suggest"><h2>Senin için</h2><div class="scards">${people.map((user) => {
+  const people = store.suggestPeople();
+  const empty = posts.length ? "" : `<p class="empty">Henüz paylaşım yok. İlk fotoğrafı sen bırak.</p>`;
+  return `<p class="desk-label">Akış</p>${storyStrip()}${empty}${cards.join("")}<section class="suggest"><h2>Senin için</h2><div class="scards">${people.map((user) => {
     const on = store.isFollowing(user.id);
     return `<article class="scard">${avatar(user, 56)}<b>${esc(user.id)}</b><span>${esc(user.name)}</span><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip et"}</button></article>`;
   }).join("")}</div></section>`;
@@ -519,7 +522,11 @@ function profileScreen(id, tab) {
   const panel = user.id === me()
     ? `<a class="panon" href="#/pano"><strong>Panon</strong><span>Gönderilerin ${formatCount(likes)} beğenme aldı.</span></a>`
     : "";
-  const locked = user.id === me() && store.isPrivate() ? `<p class="hint">Gizli hesap</p>` : "";
+  const locked = user.id === me() && store.isPrivate()
+    ? `<p class="hint">Gizli hesap</p>`
+    : user.closed && user.id !== me() && !store.isFollowing(user.id)
+      ? `<p class="hint">Bu hesap gizli. Takip edince gönderileri görürsün.</p>`
+      : "";
   return `<section class="profile-top"><div class="profile-ava">${note ? `<span class="note-bubble">${esc(note)}</span>` : ""}${photo}</div><div><div class="name-line"><strong>${esc(store.displayName(user))}${tick(user.id)}</strong>${pronouns ? `<span>${esc(pronouns)}</span>` : ""}</div><ul class="stats"><li><strong>${formatCount(posts.length)}</strong><span>gönderi</span></li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></a></li></ul></div></section>
     <div class="bio">${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${esc(store.bioOf(user))}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https?:\/\//, ""))}</a>` : ""}</div>
     ${panel}
@@ -537,7 +544,11 @@ function desktopProfile(user, photo, _actions, addLight, lights, base, tab, body
   const pronouns = store.pronounsOf(user);
   const category = store.categoryOf(user);
   const link = safeHttp(store.linkOf(user));
-  const locked = user.id === me() && store.isPrivate() ? `<p class="hint">Gizli hesap</p>` : "";
+  const locked = user.id === me() && store.isPrivate()
+    ? `<p class="hint">Gizli hesap</p>`
+    : user.closed && user.id !== me() && !store.isFollowing(user.id)
+      ? `<p class="hint">Bu hesap gizli. Takip edince gönderileri görürsün.</p>`
+      : "";
   const buttons = user.id === me()
     ? `<a class="btn" href="#/duzenle">Profili düzenle</a><a class="btn" href="#/arsiv">Arşivi gör</a>`
     : `<button type="button" class="btn primary follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button><a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
@@ -687,7 +698,7 @@ function postScreen(id) {
       <div class="actions"><div class="left"><button type="button" data-act="like" data-like="${reel.id}" class="${liked ? "on" : ""}" aria-label="Beğen">${icon(liked ? "heartFill" : "heart")}</button><button type="button" data-act="focus-comment" aria-label="Yorum">${icon("comment")}</button><button type="button" data-act="share" data-id="${reel.id}" data-kind="reel" aria-label="Paylaş">${icon("send")}</button></div>
       <button type="button" data-act="save" data-save="${reel.id}" class="${store.saved(reel.id) ? "on" : ""}" aria-label="Kaydet">${icon(store.saved(reel.id) ? "bookmarkFill" : "bookmark")}</button></div>
       <button type="button" class="like-count" data-likecount="${reel.id}">${formatCount(store.likeCount(reel))} beğenme</button>
-      <p class="caption"><a class="author" href="${profileHref(reel.user)}">${userLabel(reel.user)}</a> ${rich(reel.caption || "")}</p></article>${commentBlock(reel.id, [])}`;
+      <p class="caption"><a class="author" href="${profileHref(reel.user)}">${userLabel(reel.user)}</a> ${rich(reel.caption || "")}</p></article>${commentBlock(reel.id, store.commentsFor(reel))}`;
   }
   if (!post) return missing("Bu gönderi yok.");
   const comments = store.commentsFor(post);
@@ -715,7 +726,7 @@ function storyScreen(id, index) {
     </div>
     ${frame.text ? `<p class="story-caption">${esc(frame.text)}</p>` : ""}
     <div class="zones"><button type="button" data-act="story-go" data-dir="-1" aria-label="Önceki">.</button><button type="button" data-act="story-go" data-dir="1" aria-label="Sonraki">.</button></div>
-    <form class="story-reply" data-kind="story" data-user="${esc(pack.owner)}"><input name="text" maxlength="500" placeholder="${esc(owner ? `${owner.id} kişisine yanıt gönder` : "Yanıt gönder")}" aria-label="Hikaye yanıtı" autocomplete="off"><button type="submit" aria-label="Gönder">${icon("send")}</button></form>
+    <form class="story-reply" data-kind="story" data-user="${esc(pack.owner)}" data-story="${esc(frame.id)}"><input name="text" maxlength="500" placeholder="${esc(owner ? `${owner.id} kişisine yanıt gönder` : "Yanıt gönder")}" aria-label="Hikaye yanıtı" autocomplete="off"><button type="submit" aria-label="Gönder">${icon("send")}</button></form>
   </section>`;
 }
 
@@ -950,7 +961,7 @@ function screen(r) {
   if (r.head === "pano") {
     const posts = store.postsBy(me());
     const likes = posts.reduce((sum, post) => sum + store.likeCount(post), 0);
-    return `<div class="panon page"><strong>Panon</strong><p>${formatCount(posts.length)} gönderi</p><p>${formatCount(likes)} beğenme</p><p>${formatCount(store.followerCount(getUser(me())))} takipçi</p><p class="hint">Bu sayılar bu telefondaki hesaba ait.</p></div>`;
+    return `<div class="panon page"><strong>Panon</strong><p>${formatCount(posts.length)} gönderi</p><p>${formatCount(likes)} beğenme</p><p>${formatCount(store.followerCount(getUser(me())))} takipçi</p><p class="hint">Bu sayılar sunucudaki hesabına ait.</p></div>`;
   }
   if (r.head === "kaydedilenler") return photoGrid(store.savedPosts());
   if (r.head === "arsiv") {
@@ -1517,6 +1528,7 @@ function shiftCarousel(id, direction) {
   if (pager) pager.textContent = `${carousel[id] + 1}/${count}`;
 }
 
+let publishing = false;
 let lastTap = { id: "", at: 0 };
 let swipe = null;
 
@@ -1657,7 +1669,7 @@ document.body.addEventListener("click", (event) => {
       render();
       toast(store.isPrivate() ? "Hesap gizli" : "Hesap herkese açık");
     } else if (zone.dataset.setting === "about") {
-      openSheet(`<div class="grab"></div><p class="hint">Hesap ve mavi tik başvuruları sunucuda durur. Beğeniler ve gönderiler bu telefonda kalır. Fotoğraflar Unsplash lisansı ile eklendi.</p><button type="button" data-act="close-sheet">Kapat</button>`);
+      openSheet(`<div class="grab"></div><p class="hint">Gönderiler, hikayeler, beğeniler ve mesajlar sunucuda durur. Kayıt olan herkes aynı akışı görür.</p><button type="button" data-act="close-sheet">Kapat</button>`);
     }
   } else if (act === "new-account") {
     store.logout().finally(() => {
@@ -1691,7 +1703,7 @@ document.body.addEventListener("click", (event) => {
     authError = "";
     render();
   } else if (act === "logout-ask") {
-    openSheet(`<div class="grab"></div><p class="hint">Çıkış yapılır. Hesabın ve gönderilerin bu telefonda durur.</p><button type="button" class="danger" data-act="logout-do">Çıkış yap</button><button type="button" data-act="close-sheet">Vazgeç</button>`);
+    openSheet(`<div class="grab"></div><p class="hint">Çıkış yapılır. Hesabın ve gönderilerin sunucuda kalır.</p><button type="button" class="danger" data-act="logout-do">Çıkış yap</button><button type="button" data-act="close-sheet">Vazgeç</button>`);
   } else if (act === "review-verify") {
     const id = zone.dataset.id || "";
     const status = zone.dataset.status || "";
@@ -1749,7 +1761,7 @@ document.body.addEventListener("click", (event) => {
     store.setTheme(zone.dataset.theme);
     render();
   } else if (act === "reset-ask") {
-    openSheet(`<div class="grab"></div><p class="hint">Beğeniler, mesajlar ve eklediğin gönderiler bu telefondan silinir.</p><button type="button" class="danger" data-act="reset-do">Sil</button><button type="button" data-act="close-sheet">Vazgeç</button>`);
+    openSheet(`<div class="grab"></div><p class="hint">Bu cihazdan çıkılır. Hesabın ve gönderilerin sunucuda kalır.</p><button type="button" class="danger" data-act="reset-do">Çık</button><button type="button" data-act="close-sheet">Vazgeç</button>`);
   } else if (act === "reset-do") {
     store.reset().finally(() => {
       draft = blankDraft();
@@ -1862,7 +1874,7 @@ async function submitAuth(form, kind) {
   toast(result.created ? "Hesap kuruldu" : kind === "signup" ? "Hesap oluşturuldu" : "Giriş yapıldı");
 }
 
-document.body.addEventListener("submit", (event) => {
+document.body.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
   event.preventDefault();
@@ -1920,7 +1932,7 @@ document.body.addEventListener("submit", (event) => {
     const userId = form.dataset.user;
     if (userId && userId !== me() && getUser(userId)) {
       store.sendMessage(userId, text.slice(0, 500));
-      store.addStoryReply(userId, text.slice(0, 500));
+      store.addStoryReply(userId, text.slice(0, 500), form.dataset.story);
       toast("Yanıt gönderildi");
       form.reset();
     }
@@ -1928,7 +1940,8 @@ document.body.addEventListener("submit", (event) => {
   }
   if (kind === "note") {
     const note = new FormData(form).get("note")?.toString().trim().slice(0, 60) || "";
-    if (!store.updateProfile({ note })) { toast("Not sığmadı"); return; }
+    const savedNote = await store.updateProfile({ note });
+    if (!savedNote) { toast("Not sığmadı"); return; }
     closeSheet();
     render();
     return;
@@ -1941,57 +1954,48 @@ document.body.addEventListener("submit", (event) => {
       toast("Bir şey yaz veya fotoğraf seç");
       return;
     }
-    const image = draft.image || cardUri(draft.bg, text || kindLabel(create));
-    if (create === "hikaye") {
-      const ok = store.addFrame({
-        id: `me-${Date.now()}`,
-        image,
-        text: draft.image ? text.slice(0, 140) : "",
-        at: Date.now(),
-      });
-      if (!ok) { toast("Hikaye sığmadı"); return; }
-      draft = blankDraft();
-      location.hash = `#/h/${me()}/0`;
-      return;
-    }
-    if (create === "reel") {
-      const reel = {
-        id: `ur-${Date.now()}`,
-        user: me(),
-        src: "",
-        blobId: draft.blobId || "",
-        poster: draft.image || image,
-        image,
+    if (publishing) return;
+    publishing = true;
+    const button = form.querySelector("button[type=submit]");
+    if (button) button.disabled = true;
+    try {
+      const image = draft.image || (create === "reel" && draft.videoUrl ? "" : cardUri(draft.bg, text || kindLabel(create)));
+      let video = null;
+      if (draft.blobId) video = await getBlob(draft.blobId);
+      else if (draft.videoUrl) video = await (await fetch(draft.videoUrl)).blob();
+      let picture = null;
+      if (image) picture = await (await fetch(image)).blob();
+      const result = await store.publishEntry({
+        kind: create,
         caption: text.slice(0, 2200),
-        likes: 0,
-        at: Date.now(),
+        location: (draft.location || "").trim().slice(0, 80),
+        alt: (draft.alt || "").trim().slice(0, 200) || "Senin gönderin",
         topic: "Sen",
-      };
-      if (!store.addReel(reel)) { toast("Reel sığmadı"); return; }
+        ai: Boolean(draft.ai),
+        collaborators: (draft.collaborators || []).map((id) => safeId(id)).filter(Boolean),
+        commentsClosed: Boolean(draft.commentsClosed),
+        image: picture,
+        video,
+        text: draft.image ? text.slice(0, 140) : "",
+      });
+      if (!result?.ok) {
+        toast(result?.error || "Paylaşılamadı");
+        return;
+      }
+      await store.syncWorld();
       draft = blankDraft();
-      location.hash = `#/reels/${reel.id}`;
-      return;
+      if (create === "hikaye") location.hash = `#/h/${me()}/0`;
+      else if (create === "reel") location.hash = `#/reels/${result.id}`;
+      else {
+        location.hash = "#/";
+        toast("Paylaşıldı");
+      }
+      render();
+    } catch {
+      toast("Paylaşılamadı");
+    } finally {
+      publishing = false;
     }
-    const post = {
-      id: `up-${Date.now()}`,
-      user: me(),
-      images: [image],
-      alt: (draft.alt || "").trim().slice(0, 200) || "Senin gönderin",
-      caption: text.slice(0, 2200),
-      location: (draft.location || "").trim().slice(0, 80),
-      topic: "Sen",
-      likes: 0,
-      at: Date.now(),
-      likers: [],
-      comments: [],
-      ai: Boolean(draft.ai),
-      collaborators: (draft.collaborators || []).map((id) => safeId(id)).filter(Boolean),
-      commentsClosed: Boolean(draft.commentsClosed),
-    };
-    if (!store.addPost(post)) { toast("Gönderi sığmadı"); return; }
-    draft = blankDraft();
-    location.hash = "#/";
-    toast("Paylaşıldı");
   }
 });
 
@@ -2007,10 +2011,11 @@ document.body.addEventListener("change", async (event) => {
     if (!file) return;
     try {
       const url = await compressImage(file, 320);
-      if (!store.updateProfile({ avatar: url })) {
+      if (!(await store.updateProfile({ avatar: url }))) {
         toast("Bu fotoğraf sığmadı");
         return;
       }
+      await store.syncWorld();
       render();
     } catch {
       toast("Fotoğraf açılamadı");
@@ -2018,7 +2023,7 @@ document.body.addEventListener("change", async (event) => {
   }
 });
 
-document.body.addEventListener("submit", (event) => {
+document.body.addEventListener("submit", async (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || form.id !== "edit-form") return;
   event.preventDefault();
@@ -2033,10 +2038,11 @@ document.body.addEventListener("submit", (event) => {
     toast("Bağlantı https ile başlamalı");
     return;
   }
-  if (!store.updateProfile({ name, bio, pronouns, note, link })) {
+  if (!(await store.updateProfile({ name, bio, pronouns, note, link }))) {
     toast("Profil sığmadı");
     return;
   }
+  await store.syncWorld();
   location.hash = "#/profil";
   toast("Profil güncellendi");
 });
@@ -2153,17 +2159,21 @@ window.addEventListener("hashchange", () => {
 matchMedia("(min-width: 1024px)").addEventListener("change", render);
 
 function refreshAccount() {
+  const field = document.activeElement;
+  if (field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA")) return;
   if (accountSyncing || Date.now() - accountSyncAt < 8000) return;
   accountSyncing = true;
-  store.syncAccount().finally(() => {
+  Promise.all([store.syncAccount(), store.syncWorld()]).then(([, changed]) => {
+    if (changed) render();
+  }).finally(() => {
     accountSyncing = false;
     accountSyncAt = Date.now();
-    render();
   });
 }
 
 async function hydrate() {
   await store.syncAccount();
+  await store.syncWorld();
   accountSyncAt = Date.now();
   for (const id of store.ownReelBlobs()) {
     try {
@@ -2176,4 +2186,11 @@ async function hydrate() {
 if (!location.hash) history.replaceState(null, "", "#/");
 syncViewport();
 applyTheme();
+window.addEventListener("blade-notice", (event) => {
+  toast(String(event.detail || "Olmadı"));
+  render();
+});
+setInterval(() => {
+  if (store.session()) refreshAccount();
+}, 12000);
 hydrate().finally(render);

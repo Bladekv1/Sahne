@@ -1,16 +1,10 @@
 import {
   ME as seedOwner,
-  activity,
+  everyone,
   getUser,
-  highlights,
+  setDirectory,
   setLocalUsers,
   accountHistory as seedHistory,
-  posts as seedPosts,
-  reels as seedReels,
-  seedLikes,
-  stories as seedStories,
-  storyReplies as seedStoryReplies,
-  threads as seedThreads,
   users,
 } from "./data.js";
 
@@ -68,6 +62,28 @@ let root = loadRoot();
 let state = blank();
 let peopleCache = [];
 let serverUser = null;
+let pending = 0;
+let lastWorld = "";
+
+function emptyWorld() {
+  return {
+    posts: [],
+    reels: [],
+    stories: [],
+    highlights: [],
+    threads: [],
+    activity: [],
+    storyReplies: [],
+  };
+}
+
+let world = emptyWorld();
+
+function clearWorld() {
+  world = emptyWorld();
+  lastWorld = "";
+  setDirectory([]);
+}
 
 function localRecord(account, online) {
   return {
@@ -169,6 +185,7 @@ export async function syncAccount() {
     else if (root.session) {
       root.session = "";
       serverUser = null;
+      clearWorld();
       bind();
       save();
     }
@@ -223,24 +240,167 @@ export function setTheme(value) {
   save();
 }
 
+function notify(message) {
+  window.dispatchEvent(new CustomEvent("blade-notice", { detail: message || "Olmadı" }));
+}
+
+function findItem(id) {
+  return world.posts.find((post) => post.id === id) || world.reels.find((reel) => reel.id === id) || null;
+}
+
+async function getJson(path) {
+  try {
+    const response = await fetch(path, { credentials: "same-origin" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return { error: data.error || "Olmadı." };
+    return data;
+  } catch {
+    return { error: "Sunucuya ulaşılamadı." };
+  }
+}
+
+function applyWorld(data) {
+  world = {
+    posts: data.posts || [],
+    reels: data.reels || [],
+    stories: data.stories || [],
+    highlights: data.highlights || [],
+    threads: data.threads || [],
+    activity: data.activity || [],
+    storyReplies: data.storyReplies || [],
+  };
+  state.likes = {};
+  for (const id of data.likes || []) state.likes[id] = true;
+  state.saves = {};
+  for (const id of data.saves || []) state.saves[id] = true;
+  state.hidden = {};
+  for (const id of data.hidden || []) state.hidden[id] = true;
+  state.follows = {};
+  for (const id of data.following || []) state.follows[id] = true;
+  state.seen = data.seen || {};
+  state.read = data.reads || {};
+  const mine = (data.profiles || []).find((person) => person.id === me());
+  if (mine) {
+    state.profile = {
+      name: mine.name || null,
+      bio: mine.bio ?? "",
+      avatar: mine.avatar || null,
+      note: mine.note ?? "",
+      pronouns: mine.pronouns ?? "",
+      link: mine.link ?? "",
+      category: mine.category ?? "",
+    };
+    state.privateAccount = !!mine.closed;
+  }
+  const profiles = (data.profiles || []).map((person) => {
+    const seed = users.find((user) => user.id === person.id);
+    return { ...(seed || {}), ...person, online: person.id === me() || !!seed?.online, local: !seed };
+  });
+  setDirectory(profiles);
+}
+
+export async function syncWorld() {
+  if (!me() || pending > 0) return false;
+  const data = await getJson("/api/world");
+  if (!data || data.error || pending > 0) return false;
+  const next = JSON.stringify(data);
+  if (next === lastWorld) return false;
+  lastWorld = next;
+  applyWorld(data);
+  return true;
+}
+
+async function uploadBlob(blob) {
+  if (!blob) return { error: "Bir fotoğraf veya video seç." };
+  let response;
+  try {
+    response = await fetch("/api/media", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": blob.type || "application/octet-stream" },
+      body: blob,
+    });
+  } catch {
+    return { error: "Sunucuya ulaşılamadı." };
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return { error: data.error || "Dosya yüklenmedi." };
+  return { id: data.id };
+}
+
+export async function publishEntry({ kind, caption, location, alt, topic, ai, collaborators, commentsClosed, image, video, text }) {
+  pending += 1;
+  try {
+    const mediaIds = [];
+    if (video) {
+      const uploaded = await uploadBlob(video);
+      if (!uploaded.id) return uploaded;
+      mediaIds.push(uploaded.id);
+    }
+    if (image) {
+      const uploaded = await uploadBlob(image);
+      if (!uploaded.id) return uploaded;
+      if (kind === "hikaye") {
+        const story = await postJson("/api/stories", { mediaId: uploaded.id, text: text || "" });
+        return story.error ? story : { ok: true, id: story.id };
+      }
+      mediaIds.push(uploaded.id);
+    }
+    if (kind === "hikaye") return { error: "Hikaye için bir fotoğraf seç." };
+    const data = await postJson("/api/posts", {
+      kind: kind === "reel" ? "reel" : "post",
+      caption,
+      location,
+      alt,
+      topic,
+      ai,
+      collaborators,
+      commentsClosed,
+      mediaIds,
+    });
+    return data.error ? data : { ok: true, id: data.id };
+  } finally {
+    pending -= 1;
+  }
+}
+
 export function liked(id) {
-  if (Object.prototype.hasOwnProperty.call(state.likes, id)) return !!state.likes[id];
-  return me() === seedOwner && seedLikes.includes(id);
+  return !!state.likes[id];
 }
 
 export function saved(id) {
   return !!state.saves[id];
 }
 
+function track(run) {
+  pending += 1;
+  return Promise.resolve()
+    .then(run)
+    .finally(() => {
+      pending -= 1;
+    });
+}
+
 export function toggleLike(id) {
-  state.likes[id] = !liked(id);
-  save();
+  const on = !liked(id);
+  state.likes[id] = on;
+  track(() => postJson("/api/like", { id, on })).then((data) => {
+    if (data?.error) {
+      state.likes[id] = !on;
+      notify(data.error);
+    }
+  });
+  return true;
 }
 
 export function toggleSave(id) {
-  if (state.saves[id]) delete state.saves[id];
-  else state.saves[id] = true;
-  save();
+  const on = !saved(id);
+  if (on) state.saves[id] = true;
+  else delete state.saves[id];
+  track(() => postJson("/api/save", { id, on })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
+  return true;
 }
 
 export function likeCount(item) {
@@ -249,13 +409,27 @@ export function likeCount(item) {
 
 export function isFollowing(id) {
   if (!id || id === me()) return false;
-  if (Object.prototype.hasOwnProperty.call(state.follows, id)) return !!state.follows[id];
-  return me() === seedOwner && !!getUser(id)?.followed;
+  return !!state.follows[id];
 }
 
 export function toggleFollow(id) {
-  state.follows[id] = !isFollowing(id);
-  save();
+  if (!id || id === me()) return false;
+  const on = !isFollowing(id);
+  state.follows[id] = on;
+  const user = getUser(id);
+  const self = getUser(me());
+  if (user) {
+    user.followers = Math.max(0, (user.followers || 0) + (on ? 1 : -1));
+    user.followerIds = on ? [...new Set([...(user.followerIds || []), me()])] : (user.followerIds || []).filter((item) => item !== me());
+  }
+  if (self) {
+    self.following = Math.max(0, (self.following || 0) + (on ? 1 : -1));
+    self.followingIds = on ? [...new Set([...(self.followingIds || []), id])] : (self.followingIds || []).filter((item) => item !== id);
+  }
+  track(() => postJson("/api/follow", { id, on })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
+  return true;
 }
 
 export function displayName(user) {
@@ -269,8 +443,9 @@ export function bioOf(user) {
 }
 
 export function avatarOf(user) {
-  if (user.id === me() && state.profile.avatar) return state.profile.avatar;
-  if (user.local) {
+  const picture = (user.id === me() && state.profile.avatar) || user.avatar || "";
+  if (picture.startsWith("/api/media/") || picture.startsWith("media/") || picture.startsWith("data:image/")) return picture;
+  if (user.local || user.sample === false) {
     const letter = (user.name || user.id || "?").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 1).toLocaleUpperCase("tr-TR") || "?";
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#262626"/><text x="40" y="52" text-anchor="middle" font-family="Georgia,serif" font-size="34" fill="#fff">${letter}</text></svg>`;
     return `data:image/svg+xml,${encodeURIComponent(svg)}`;
@@ -304,62 +479,73 @@ export function isPrivate() {
 }
 
 export function setPrivate(value) {
-  state.privateAccount = !!value;
-  return save();
+  const next = !!value;
+  state.privateAccount = next;
+  const self = getUser(me());
+  if (self) self.closed = next;
+  track(() => postJson("/api/profile", { closed: next })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
+  return true;
 }
 
-export function updateProfile(patch) {
+export async function updateProfile(patch) {
+  const next = { ...patch };
+  if (typeof next.avatar === "string" && next.avatar.startsWith("data:")) {
+    const blob = await (await fetch(next.avatar)).blob();
+    const uploaded = await uploadBlob(blob);
+    if (!uploaded.id) return false;
+    next.avatar = `/api/media/${uploaded.id}`;
+  }
   const labels = { name: "Ad", bio: "Biyografi", pronouns: "Hitaplar", note: "Not", link: "Bağlantı", category: "Kategori", avatar: "Profil fotoğrafı" };
-  const events = Object.entries(patch).filter(([key, value]) => labels[key] && state.profile[key] !== value).map(([key, value]) => ({
+  const events = Object.entries(next).filter(([key, value]) => labels[key] && state.profile[key] !== value).map(([key, value]) => ({
     id: `h-${Date.now()}-${key}`,
     label: labels[key],
     detail: key === "avatar" ? "Fotoğraf güncellendi" : String(value || "Boş").slice(0, 80),
     at: Date.now(),
   }));
+  pending += 1;
+  const data = await postJson("/api/profile", next).finally(() => {
+    pending -= 1;
+  });
+  if (data.error) return false;
   if (events.length) state.history = [...events, ...(state.history || [])].slice(0, 40);
-  state.profile = { ...state.profile, ...patch };
-  return save();
+  state.profile = { ...state.profile, ...next };
+  const self = getUser(me());
+  if (self) Object.assign(self, next);
+  lastWorld = "";
+  return true;
 }
 
 export function followerCount(user) {
-  if (user.id === me()) return user.followers;
-  const was = user.followerIds.includes(me());
-  const now = isFollowing(user.id);
-  if (now && !was) return user.followers + 1;
-  if (!now && was) return user.followers - 1;
-  return user.followers;
+  return user?.followers || 0;
 }
 
 export function followingCount(user) {
-  if (user.id !== me()) return user.following;
-  let delta = 0;
-  for (const other of users) {
-    if (other.id === me()) continue;
-    const seed = !!other.followed;
-    const now = isFollowing(other.id);
-    if (now !== seed) delta += now ? 1 : -1;
-  }
-  return user.following + delta;
+  return user?.following || 0;
 }
 
 export function followerList(user) {
-  const ids = new Set(user.followerIds);
-  if (user.id !== me()) {
-    if (isFollowing(user.id)) ids.add(me());
-    else ids.delete(me());
-  }
-  return [...ids].map(getUser).filter(Boolean);
+  return (user.followerIds || []).map(getUser).filter(Boolean);
 }
 
 export function followingList(user) {
-  if (user.id === me()) return users.filter((other) => other.id !== me() && isFollowing(other.id));
-  return user.followingIds.map(getUser).filter(Boolean);
+  return (user.followingIds || []).map(getUser).filter(Boolean);
+}
+
+export function suggestPeople() {
+  return everyone()
+    .filter((user) => user.id !== me() && !isFollowing(user.id))
+    .sort((a, b) => Number(Boolean(a.sample)) - Number(Boolean(b.sample)) || (b.followers || 0) - (a.followers || 0))
+    .slice(0, 8);
+}
+
+export function homePosts() {
+  return allPosts();
 }
 
 export function allPosts() {
-  return [...state.posts, ...seedPosts]
-    .filter((post) => !state.hidden[post.id])
-    .sort((a, b) => b.at - a.at);
+  return world.posts.filter((post) => !state.hidden[post.id]).sort((a, b) => b.at - a.at);
 }
 
 export function postsBy(userId) {
@@ -376,7 +562,7 @@ export function savedPosts() {
 }
 
 export function hiddenPosts() {
-  return [...state.posts, ...seedPosts].filter((post) => post.user === me() && state.hidden[post.id]).sort((a, b) => b.at - a.at);
+  return world.posts.filter((post) => post.user === me() && state.hidden[post.id]).sort((a, b) => b.at - a.at);
 }
 
 export function likedMedia() {
@@ -395,13 +581,14 @@ export function ownComments() {
 }
 
 export function storyReplies() {
-  return [...(state.storyReplies || []), ...(me() === seedOwner ? seedStoryReplies : [])].sort((a, b) => b.at - a.at);
+  return [...(world.storyReplies || [])].sort((a, b) => b.at - a.at);
 }
 
-export function addStoryReply(userId, text) {
-  const item = { id: `sr-${Date.now()}`, user: userId, text, at: Date.now() };
-  state.storyReplies = [item, ...(state.storyReplies || [])];
-  return save() ? item : null;
+export function addStoryReply(userId, text, storyId) {
+  const story = world.stories.find((item) => item.user === userId);
+  const frameId = storyId || story?.frames?.[0]?.id || "";
+  if (frameId) track(() => postJson("/api/stories/reply", { storyId: frameId, text }));
+  return { id: frameId, user: userId, text, at: Date.now() };
 }
 
 export function accountHistory() {
@@ -414,51 +601,59 @@ export function postById(id) {
 
 export function hidePost(id) {
   state.hidden[id] = true;
-  save();
-}
-
-export function addPost(post) {
-  state.posts.unshift(post);
-  return save();
+  track(() => postJson("/api/posts/hide", { id })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
 }
 
 export function deleteOwnPost(id) {
-  state.posts = state.posts.filter((post) => post.id !== id);
-  delete state.hidden[id];
-  save();
+  const item = findItem(id);
+  if (!item || item.user !== me()) return;
+  world.posts = world.posts.filter((post) => post.id !== id);
+  world.reels = world.reels.filter((reel) => reel.id !== id);
+  track(() => postJson("/api/posts/delete", { id })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
 }
 
 export function isOwnPost(id) {
-  return state.posts.some((post) => post.id === id);
+  const item = findItem(id);
+  return !!item && item.user === me();
 }
 
 export function commentsFor(post) {
-  const extra = (state.comments[post.id] || []).map((comment) => ({ ...comment, own: true }));
-  return [...(post.comments || []), ...extra];
+  return (post?.comments || []).map((comment) => ({ ...comment, own: comment.user === me() }));
 }
 
 export function addComment(postId, text) {
+  const item = findItem(postId);
   const comment = { id: `c-${Date.now()}`, user: me(), text, at: Date.now(), own: true };
-  state.comments[postId] = [...(state.comments[postId] || []), comment];
-  const ok = save();
-  return ok ? comment : null;
+  if (item) item.comments = [...(item.comments || []), comment];
+  track(() => postJson("/api/comments", { postId, text })).then((data) => {
+    if (data?.error) {
+      if (item) item.comments = (item.comments || []).filter((row) => row.id !== comment.id);
+      notify(data.error);
+      return;
+    }
+    if (data.comment) comment.id = data.comment.id;
+  });
+  return comment;
 }
 
 export function deleteComment(postId, commentId) {
-  state.comments[postId] = (state.comments[postId] || []).filter((comment) => comment.id !== commentId);
-  save();
+  const item = findItem(postId);
+  if (item) item.comments = (item.comments || []).filter((comment) => comment.id !== commentId);
+  track(() => postJson("/api/comments/delete", { id: commentId })).then((data) => {
+    if (data?.error) notify(data.error);
+  });
 }
 
 export function packFor(id) {
-  const highlight = highlights.find((item) => item.id === id);
-  if (highlight) {
-    return { user: highlight.id, owner: highlight.owner, title: highlight.title, frames: highlight.frames };
-  }
-  const story = seedStories.find((item) => item.user === id);
-  const extra = id === me() ? state.frames : [];
-  if (!story && extra.length) return { user: me(), owner: me(), title: "", frames: extra };
+  const highlight = world.highlights.find((item) => item.id === id);
+  if (highlight) return { user: highlight.id, owner: highlight.owner, title: highlight.title, frames: highlight.frames };
+  const story = world.stories.find((item) => item.user === id);
   if (!story) return null;
-  return { user: id, owner: id, title: "", frames: [...extra, ...story.frames] };
+  return { user: id, owner: id, title: "", frames: story.frames };
 }
 
 export function storySeen(pack) {
@@ -477,26 +672,23 @@ export function seeFrame(userId, frameId) {
   if (seen[frameId]) return;
   seen[frameId] = true;
   state.seen[userId] = seen;
-  save();
+  track(() => postJson("/api/stories/seen", { id: frameId }));
 }
 
 export function storyRow() {
-  const mine = packFor(me());
-  const rest = seedStories
-    .filter((story) => story.user !== me())
-    .map((story) => packFor(story.user))
-    .filter(Boolean)
-    .sort((a, b) => Number(storySeen(a)) - Number(storySeen(b)));
-  return [mine, ...rest].filter(Boolean);
-}
-
-export function addFrame(frame) {
-  state.frames.unshift(frame);
-  return save();
+  const packs = world.stories.map((story) => packFor(story.user)).filter((pack) => pack && pack.frames.length);
+  const mine = packs.find((pack) => pack.owner === me());
+  const rest = packs.filter((pack) => pack.owner !== me()).sort((a, b) => {
+    const follow = Number(isFollowing(b.owner)) - Number(isFollowing(a.owner));
+    if (follow) return follow;
+    return Number(storySeen(a)) - Number(storySeen(b));
+  });
+  const slot = mine || (me() ? { user: me(), owner: me(), title: "", frames: [] } : null);
+  return [slot, ...rest].filter(Boolean);
 }
 
 export function allReels() {
-  return [...state.reels, ...seedReels].sort((a, b) => b.at - a.at);
+  return [...world.reels].sort((a, b) => b.at - a.at);
 }
 
 export function reelsBy(userId) {
@@ -507,27 +699,33 @@ export function reelById(id) {
   return allReels().find((reel) => reel.id === id) || null;
 }
 
-export function addReel(reel) {
-  state.reels.unshift(reel);
-  return save();
-}
-
 export function ownReelBlobs() {
-  return state.reels.map((reel) => reel.blobId).filter(Boolean);
+  return [];
 }
 
 export function messagesFor(userId) {
-  const seed = me() === seedOwner ? (seedThreads.find((thread) => thread.user === userId)?.messages || []) : [];
-  const extra = state.messages[userId] || [];
-  return [...seed, ...extra].sort((a, b) => a.at - b.at);
+  const thread = world.threads.find((item) => item.user === userId);
+  return thread ? [...thread.messages].sort((a, b) => a.at - b.at) : [];
 }
 
 export function sendMessage(userId, text) {
   const message = { id: `m-${Date.now()}`, from: me(), text, at: Date.now() };
-  state.messages[userId] = [...(state.messages[userId] || []), message];
+  let thread = world.threads.find((item) => item.user === userId);
+  if (!thread) {
+    thread = { user: userId, messages: [] };
+    world.threads.push(thread);
+  }
+  thread.messages.push(message);
   state.read[userId] = message.at;
-  const ok = save();
-  return ok ? message : null;
+  track(() => postJson("/api/messages", { to: userId, text })).then((data) => {
+    if (data?.error) {
+      thread.messages = thread.messages.filter((item) => item.id !== message.id);
+      notify(data.error);
+      return;
+    }
+    if (data.message) message.id = data.message.id;
+  });
+  return message;
 }
 
 export function markRead(userId) {
@@ -536,7 +734,7 @@ export function markRead(userId) {
   if (!last) return;
   if ((state.read[userId] || 0) >= last.at) return;
   state.read[userId] = Date.now();
-  save();
+  track(() => postJson("/api/read", { user: userId }));
 }
 
 export function threadUnread(userId) {
@@ -547,10 +745,7 @@ export function threadUnread(userId) {
 }
 
 export function inbox() {
-  const ids = new Set([
-    ...(me() === seedOwner ? seedThreads.map((thread) => thread.user) : []),
-    ...Object.keys(state.messages),
-  ]);
+  const ids = new Set(world.threads.map((thread) => thread.user));
   return [...ids]
     .map((id) => {
       const messages = messagesFor(id);
@@ -566,21 +761,23 @@ export function unreadTotal() {
 }
 
 export function activityItems() {
-  return me() === seedOwner ? activity : [];
+  return world.activity || [];
 }
 
 export function activityPending() {
-  return me() === seedOwner && !state.activitySeen;
+  const newest = world.activity[0]?.at || 0;
+  return newest > (state.activitySeenAt || 0);
 }
 
 export function seeActivity() {
-  if (state.activitySeen) return;
-  state.activitySeen = true;
+  const newest = world.activity[0]?.at || 0;
+  if (!newest || (state.activitySeenAt || 0) >= newest) return;
+  state.activitySeenAt = newest;
   save();
 }
 
 export function highlightsFor(userId) {
-  return highlights.filter((item) => item.owner === userId);
+  return world.highlights.filter((item) => item.owner === userId);
 }
 
 function hex(bytes) {
@@ -631,6 +828,7 @@ export async function registerAccount({ name, username, contact, password, born 
   adopt(data.user);
   rememberLogin(data.user.id, "kayıt");
   save();
+  await syncWorld();
   return { ok: true, created: true };
 }
 
@@ -641,6 +839,7 @@ export async function loginAccount(ident, password) {
   adopt(data.user);
   rememberLogin(data.user.id, data.created ? "kayıt" : "giriş");
   save();
+  await syncWorld();
   return { ok: true, created: Boolean(data.created) };
 }
 
@@ -657,6 +856,7 @@ export async function logout() {
   if (root.session) rememberLogin(root.session, "çıkış");
   root.session = "";
   serverUser = null;
+  clearWorld();
   bind();
   save();
 }
@@ -669,6 +869,7 @@ export async function reset() {
   state = blank();
   serverUser = null;
   peopleCache = [];
+  clearWorld();
   bind();
   localStorage.removeItem(KEY);
 }

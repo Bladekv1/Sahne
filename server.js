@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { ME as ownerId, users as seedUsers } from "./js/data.js";
 import { sql } from "./server/db.js";
+import { ensureProfile, handleSocial, seedSocial } from "./server/social.js";
 
 const pbkdf2Async = promisify(pbkdf2);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
@@ -231,6 +232,7 @@ async function login(req, res) {
   const account = await findAccount(ident);
   if (!account && ident === ownerId) return send(res, 401, { error: "Yönetici hesabı henüz hazır değil." });
   if (!account) return send(res, 401, { error: "Bu hesap yok. Kaydol." });
+  if (account.role === "seed") return send(res, 401, { error: "Bu hesap girişe kapalı." });
   if (password.length < 8) return send(res, 401, { error: "Şifre yanlış." });
   const actual = await hashPassword(password, Buffer.from(String(account.salt), "hex"));
   if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: "Şifre yanlış." });
@@ -263,6 +265,7 @@ async function register(req, res) {
     role: "user",
   });
   if (!account) return send(res, 409, { error: "Bu hesap zaten kayıtlı. Giriş yap." });
+  await ensureProfile(account.id);
   return openSession(res, req, account, true);
 }
 
@@ -398,7 +401,9 @@ async function handleApi(req, res, pathname) {
     return send(res, 200, { user: await accountView(account), people: await people() });
   }
   if (req.method === "GET" && pathname === "/api/people") return send(res, 200, { people: await people() });
+  if (req.method === "GET" && await handleSocial(req, res, pathname, { send, currentAccount })) return;
   if (!sameOrigin(req)) return send(res, 403, { error: "İstek kabul edilmedi." });
+  if (req.method === "POST" && await handleSocial(req, res, pathname, { send, currentAccount })) return;
   if (req.method === "POST" && pathname === "/api/login") return login(req, res);
   if (req.method === "POST" && pathname === "/api/register") return register(req, res);
   if (req.method === "POST" && pathname === "/api/logout") {
@@ -466,6 +471,7 @@ function boot() {
   booted ??= (async () => {
     await sql("select 1 as ok");
     await ensureOwner();
+    await seedSocial();
   })();
   return booted;
 }

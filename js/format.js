@@ -38,11 +38,16 @@ export function timeAgo(timestamp) {
   return `${Math.floor(seconds / (7 * 86400))} hf`;
 }
 
+function mediaUrl(src) {
+  return /^\/api\/media\/[a-f0-9]{32}$/.test(src);
+}
+
 export function safeSrc(src) {
   if (typeof src !== "string") return "";
   if (src.startsWith("media/")) return src;
   if (src.startsWith("data:image/")) return src;
   if (src.startsWith("blob:")) return src;
+  if (mediaUrl(src)) return src;
   return "";
 }
 
@@ -50,5 +55,6 @@ export function safeVideo(src) {
   if (typeof src !== "string") return "";
   if (src.startsWith("media/reels/") && src.endsWith(".mp4")) return src;
   if (src.startsWith("blob:")) return src;
+  if (mediaUrl(src)) return src;
   return "";
 }
