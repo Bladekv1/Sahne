@@ -45,11 +45,24 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
+function forwardedHost(req) {
+  return String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+}
+
+function httpsRequest(req) {
+  const proto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  return proto === "https" || String(req.headers.origin || "").startsWith("https://");
+}
+
 function sameOrigin(req) {
   const origin = req.headers.origin;
   if (!origin) return true;
+  const site = String(req.headers["sec-fetch-site"] || "");
+  if (site === "same-origin" || site === "none") return true;
   try {
-    return new URL(origin).host === req.headers.host;
+    const originHost = new URL(origin).host;
+    const hosts = [String(req.headers.host || ""), forwardedHost(req)].filter(Boolean);
+    return hosts.includes(originHost);
   } catch {
     return false;
   }
@@ -106,14 +119,15 @@ function cookieToken(req) {
 }
 
 function sessionCookie(token, req) {
-  const secure = req.headers["x-forwarded-proto"] === "https";
   const parts = [`blade_session=${encodeURIComponent(token)}`, "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=2592000"];
-  if (secure) parts.push("Secure");
+  if (httpsRequest(req)) parts.push("Secure");
   return parts.join("; ");
 }
 
-function clearCookie() {
-  return "blade_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+function clearCookie(req) {
+  const parts = ["blade_session=", "HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=0"];
+  if (req && httpsRequest(req)) parts.push("Secure");
+  return parts.join("; ");
 }
 
 function tokenHash(token) {
@@ -454,7 +468,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/logout") {
     const token = cookieToken(req);
     if (token) await sql("delete from sessions where token_hash = $1", [tokenHash(token)]);
-    return send(res, 200, { ok: true }, { "set-cookie": clearCookie() });
+    return send(res, 200, { ok: true }, { "set-cookie": clearCookie(req) });
   }
   if (req.method === "POST" && pathname === "/api/password") return changePassword(req, res);
   if (req.method === "POST" && pathname === "/api/verify") return applyVerify(req, res);
