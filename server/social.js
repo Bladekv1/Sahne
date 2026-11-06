@@ -11,6 +11,10 @@ const MAX_IMAGE = 4 * 1024 * 1024;
 const MAX_VIDEO = 8 * 1024 * 1024;
 const ACCOUNT_QUOTA = 8 * 1024 * 1024;
 const ACCOUNT_FILES = 6;
+const POSTS_PER_ACCOUNT = 12;
+const COMMENTS_PER_ACCOUNT = 20;
+const MESSAGES_PER_ACCOUNT = 40;
+const STORIES_PER_ACCOUNT = 8;
 const UNREFERENCED = `not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
   and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
   and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
@@ -241,8 +245,8 @@ async function loadWorld(account) {
             coalesce(p.closed, false) as closed
      from accounts a
      left join profiles p on p.account_id = a.id
-     order by a.created_at asc
-     limit 500`,
+     order by a.created_at desc
+     limit 80`,
   );
   const followRows = await sql("select follower_id, following_id from follows limit 5000");
   const followers = new Map();
@@ -292,7 +296,7 @@ async function loadWorld(account) {
             (extract(epoch from created_at) * 1000) as at
      from posts
      order by created_at desc
-     limit 300`,
+     limit 500`,
   );
   const mediaRows = await sql("select post_id, position, src from post_media order by post_id, position");
   const images = new Map();
@@ -304,7 +308,7 @@ async function loadWorld(account) {
   }
   const commentRows = await sql(
     `select id, post_id, account_id, body, (extract(epoch from created_at) * 1000) as at
-     from comments order by created_at asc limit 2000`,
+     from comments order by created_at desc limit 1000`,
   );
   const comments = new Map();
   for (const row of commentRows) {
@@ -317,6 +321,7 @@ async function loadWorld(account) {
       own: row.account_id === viewer,
     });
   }
+  for (const list of comments.values()) list.reverse();
   const likeRows = await sql(
     "select post_id, account_id, (extract(epoch from created_at) * 1000) as at from likes order by created_at desc limit 5000",
   );
@@ -347,8 +352,8 @@ async function loadWorld(account) {
     `select id, account_id, src, text, (extract(epoch from created_at) * 1000) as at
      from stories
      where created_at > now() - interval '24 hours'
-     order by created_at asc
-     limit 300`,
+     order by created_at desc
+     limit 400`,
   );
   const storyMap = new Map();
   for (const row of storyRows) {
@@ -358,6 +363,7 @@ async function loadWorld(account) {
     if (!storyMap.has(row.account_id)) storyMap.set(row.account_id, []);
     storyMap.get(row.account_id).push({ id: row.id, image: src, text: row.text || "", at: epoch(row.at) });
   }
+  for (const frames of storyMap.values()) frames.reverse();
   const seenRows = await sql("select story_id from story_seen where account_id = $1", [viewer]);
   const seenByUser = {};
   const storyOwner = new Map();
@@ -392,8 +398,8 @@ async function loadWorld(account) {
     `select id, sender_id, recipient_id, body, (extract(epoch from created_at) * 1000) as at
      from messages
      where sender_id = $1 or recipient_id = $1
-     order by created_at asc
-     limit 500`,
+     order by created_at desc
+     limit 200`,
     [viewer],
   );
   const threadMap = new Map();
@@ -402,6 +408,7 @@ async function loadWorld(account) {
     if (!threadMap.has(peer)) threadMap.set(peer, []);
     threadMap.get(peer).push({ id: row.id, from: row.sender_id, text: row.body, at: epoch(row.at) });
   }
+  for (const list of threadMap.values()) list.reverse();
   const readRows = await sql(
     "select peer_id, (extract(epoch from read_at) * 1000) as at from reads where account_id = $1",
     [viewer],
@@ -621,6 +628,8 @@ async function createPost(req, res, send, currentAccount) {
   for (const id of collaborators) {
     if (!(await accountExists(id))) fail(400, "Etiketlenen hesap yok.");
   }
+  const held = await sql("select count(*)::int as n from posts where account_id = $1", [account.id]);
+  if (Number(held[0]?.n || 0) >= POSTS_PER_ACCOUNT) fail(400, "Gönderi sınırına ulaştın.");
   const postId = hex(randomBytes(16));
   const video = owned.find((row) => row.mime.startsWith("video/"));
   const still = owned.find((row) => row.mime.startsWith("image/"));
@@ -768,6 +777,8 @@ async function addComment(req, res, send, currentAccount) {
   if (!rows.length) fail(404, "Gönderi bulunamadı.");
   if (flag(rows[0].comments_closed) && rows[0].account_id !== account.id) fail(400, "Yorumlar kapalı.");
   if (!(await canSeeAccount(account.id, rows[0].account_id))) fail(404, "Gönderi bulunamadı.");
+  const held = await sql("select count(*)::int as n from comments where account_id = $1", [account.id]);
+  if (Number(held[0]?.n || 0) >= COMMENTS_PER_ACCOUNT) fail(400, "Yorum sınırına ulaştın.");
   const id = hex(randomBytes(16));
   await sql("insert into comments (id, post_id, account_id, body) values ($1, $2, $3, $4)", [id, postId, account.id, text]);
   send(res, 200, { ok: true, comment: { id, user: account.id, text, at: Date.now() } });
@@ -798,6 +809,8 @@ async function sendMessage(req, res, send, currentAccount) {
   if (!to || to === account.id) fail(400, "Bu kişiye mesaj gönderilemez.");
   if (!text) fail(400, "Mesaj yaz.");
   if (!(await accountExists(to))) fail(404, "Bu hesap yok.");
+  const held = await sql("select count(*)::int as n from messages where sender_id = $1", [account.id]);
+  if (Number(held[0]?.n || 0) >= MESSAGES_PER_ACCOUNT) fail(400, "Mesaj sınırına ulaştın.");
   const id = hex(randomBytes(16));
   await sql("insert into messages (id, sender_id, recipient_id, body) values ($1, $2, $3, $4)", [id, account.id, to, text]);
   await sql(
@@ -827,6 +840,11 @@ async function addStory(req, res, send, currentAccount) {
   const mediaId = String(body.mediaId || "");
   const row = await ownedMedia(account.id, mediaId);
   if (!row || !row.mime.startsWith("image/")) fail(400, "Hikaye için bir fotoğraf seç.");
+  const held = await sql(
+    "select count(*)::int as n from stories where account_id = $1 and created_at > now() - interval '24 hours'",
+    [account.id],
+  );
+  if (Number(held[0]?.n || 0) >= STORIES_PER_ACCOUNT) fail(400, "Hikaye sınırına ulaştın.");
   const id = hex(randomBytes(16));
   await sql("insert into stories (id, account_id, src, text) values ($1, $2, $3, $4)", [id, account.id, `/api/media/${mediaId}`, clip(body.text, 140)]);
   send(res, 200, { ok: true, id });

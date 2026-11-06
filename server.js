@@ -287,13 +287,23 @@ async function findAccount(ident) {
 async function createAccount({ id, name, contact, born, password, verified, role }) {
   const salt = randomBytes(16);
   const hash = await hashPassword(password, salt, NEW_ROUNDS);
-  const rows = await sql(
-    `insert into accounts (id, name, contact, born, salt, hash, verified, role, iterations)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     on conflict (id) do nothing
-     returning id, name, verified, role`,
-    [id, name, contact, born, hex(salt), hash, verified, role, NEW_ROUNDS],
-  );
+  const params = [id, name, contact, born, hex(salt), hash, verified, role, NEW_ROUNDS];
+  const rows = role === "user"
+    ? await sql(
+      `insert into accounts (id, name, contact, born, salt, hash, verified, role, iterations)
+       select $1, $2, $3, $4, $5, $6, $7, $8, $9
+       where (select count(*)::int from accounts where role = 'user') < 40
+       on conflict (id) do nothing
+       returning id, name, verified, role`,
+      params,
+    )
+    : await sql(
+      `insert into accounts (id, name, contact, born, salt, hash, verified, role, iterations)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       on conflict (id) do nothing
+       returning id, name, verified, role`,
+      params,
+    );
   return rows[0] || null;
 }
 
@@ -307,7 +317,6 @@ async function login(req, res) {
     if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
     return send(res, 401, { error: LOGIN_FAIL });
   }
-  if (await loginLocked(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
@@ -315,12 +324,13 @@ async function login(req, res) {
   } catch {
     actual = "";
   }
-  if (!passwordMatches(actual, account.hash)) {
-    await noteLoginFailure(account.id);
-    return send(res, 401, { error: LOGIN_FAIL });
+  if (passwordMatches(actual, account.hash)) {
+    await clearLoginFailures(account.id);
+    return openSession(res, req, account, false);
   }
-  await clearLoginFailures(account.id);
-  return openSession(res, req, account, false);
+  await noteLoginFailure(account.id);
+  if (await loginLocked(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  return send(res, 401, { error: LOGIN_FAIL });
 }
 
 async function register(req, res) {
@@ -344,10 +354,8 @@ async function register(req, res) {
   if (!validBorn(born)) return send(res, 400, { error: "Doğum yılı 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
-  const recent = await sql(
-    "select count(*)::int as n from accounts where role = 'user' and created_at > now() - interval '10 minutes'",
-  );
-  if (Number(recent[0]?.n || 0) >= 6) return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
+  const total = await sql("select count(*)::int as n from accounts where role = 'user'");
+  if (Number(total[0]?.n || 0) >= 40) return send(res, 429, { error: "Yeni kayıt şu an kapalı." });
   const account = await createAccount({
     id,
     name,
