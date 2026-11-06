@@ -87,34 +87,54 @@ function hitBucket(key, limit, windowMs) {
   return slot.count > limit;
 }
 
-const loginGuards = new Map();
+function folded(value) {
+  return String(value || "").toLowerCase().replace(/[._\-\s]/g, "").replace(/[l1i!|]/g, "1").replace(/[o]/g, "0");
+}
 
-function loginPause(id) {
-  const now = Date.now();
-  if (loginGuards.size > 500) {
-    for (const [name, slot] of loginGuards) {
-      if (slot.until < now) loginGuards.delete(name);
-    }
+function looksLikeOwner(id) {
+  const name = folded(id);
+  return name === folded(ownerId) || name === "b1adekv1";
+}
+
+async function loginLocked(accountId) {
+  const rows = await sql(
+    "select 1 from login_attempts where account_id = $1 and locked_until > now() limit 1",
+    [accountId],
+  );
+  return rows.length > 0;
+}
+
+async function noteLoginFailure(accountId) {
+  const rows = await sql(
+    "select fails, window_until, locked_until from login_attempts where account_id = $1",
+    [accountId],
+  );
+  const row = rows[0];
+  const open = row && new Date(row.window_until).getTime() > Date.now();
+  if (!open) {
+    await sql(
+      `insert into login_attempts (account_id, fails, window_until, locked_until)
+       values ($1, 1, now() + interval '30 minutes', null)
+       on conflict (account_id) do update
+       set fails = 1, window_until = now() + interval '30 minutes', locked_until = null`,
+      [accountId],
+    );
+    return;
   }
-  const slot = loginGuards.get(id);
-  if (!slot || slot.until < now) return false;
-  return slot.fails >= 8 && now < slot.next;
+  if (row.locked_until && new Date(row.locked_until).getTime() > Date.now()) return;
+  const fails = Number(row.fails) + 1;
+  if (fails >= 5) {
+    await sql(
+      "update login_attempts set fails = $2, locked_until = now() + interval '30 minutes' where account_id = $1 and locked_until is null",
+      [accountId, fails],
+    );
+    return;
+  }
+  await sql("update login_attempts set fails = $2 where account_id = $1", [accountId, fails]);
 }
 
-function loginMissed(id) {
-  const now = Date.now();
-  const slot = loginGuards.get(id);
-  const fresh = !slot || slot.until < now;
-  const fails = Math.min((fresh ? 0 : slot.fails) + 1, 8);
-  loginGuards.set(id, {
-    fails,
-    until: fresh ? now + 10 * 60 * 1000 : slot.until,
-    next: fails >= 8 ? now + 10 * 1000 : 0,
-  });
-}
-
-function loginCleared(id) {
-  loginGuards.delete(id);
+async function clearLoginFailures(accountId) {
+  await sql("delete from login_attempts where account_id = $1", [accountId]);
 }
 
 async function readJson(req) {
@@ -287,7 +307,7 @@ async function login(req, res) {
     if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
     return send(res, 401, { error: LOGIN_FAIL });
   }
-  if (loginPause(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  if (await loginLocked(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
@@ -296,10 +316,10 @@ async function login(req, res) {
     actual = "";
   }
   if (!passwordMatches(actual, account.hash)) {
-    loginMissed(account.id);
+    await noteLoginFailure(account.id);
     return send(res, 401, { error: LOGIN_FAIL });
   }
-  loginCleared(account.id);
+  await clearLoginFailures(account.id);
   return openSession(res, req, account, false);
 }
 
@@ -318,12 +338,16 @@ async function register(req, res) {
   if (hitBucket(`register:${id}`, 5, 10 * 60 * 1000)) {
     return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   }
-  if (reserved.has(id)) return send(res, 400, { error: "Bu kullanıcı adı kullanılıyor." });
+  if (reserved.has(id) || looksLikeOwner(id)) return send(res, 400, { error: "Bu kullanıcı adı kullanılıyor." });
   if (!name) return send(res, 400, { error: "Adını yaz." });
   if (password.length < 8 || password.length > 200) return send(res, 400, { error: "Şifre en az 8 karakter olmalı." });
   if (!validBorn(born)) return send(res, 400, { error: "Doğum yılı 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
+  const recent = await sql(
+    "select count(*)::int as n from accounts where role = 'user' and created_at > now() - interval '10 minutes'",
+  );
+  if (Number(recent[0]?.n || 0) >= 6) return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
   const account = await createAccount({
     id,
     name,
@@ -511,7 +535,8 @@ function blocked(pathname) {
   const name = pathname.toLowerCase();
   return name.startsWith("/server") || name.startsWith("/scripts") || name.startsWith("/migrations")
     || name.startsWith("/node_modules") || name.startsWith("/.git") || name.includes("..")
-    || name.endsWith(".env") || name.endsWith("package.json") || name.endsWith("package-lock.json");
+    || name.endsWith(".env") || name.endsWith(".sql") || name.endsWith(".mjs")
+    || name.endsWith("package.json") || name.endsWith("package-lock.json");
 }
 
 function serveStatic(req, res, pathname) {
@@ -559,6 +584,14 @@ let booted;
 function boot() {
   booted ??= (async () => {
     await sql("select 1 as ok");
+    await sql(
+      `create table if not exists login_attempts (
+         account_id text primary key references accounts (id) on delete cascade,
+         fails integer not null default 0,
+         window_until timestamptz not null,
+         locked_until timestamptz
+       )`,
+    );
     await clearSamples();
     await ensureOwner();
     await sweepMedia();
