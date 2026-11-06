@@ -110,22 +110,22 @@ async function noteLoginFailure(accountId) {
     [accountId],
   );
   const row = rows[0];
+  if (row?.locked_until && new Date(row.locked_until).getTime() > Date.now()) return;
   const open = row && new Date(row.window_until).getTime() > Date.now();
   if (!open) {
     await sql(
       `insert into login_attempts (account_id, fails, window_until, locked_until)
-       values ($1, 1, now() + interval '30 minutes', null)
+       values ($1, 1, now() + interval '15 minutes', null)
        on conflict (account_id) do update
-       set fails = 1, window_until = now() + interval '30 minutes', locked_until = null`,
+       set fails = 1, window_until = now() + interval '15 minutes', locked_until = null`,
       [accountId],
     );
     return;
   }
-  if (row.locked_until && new Date(row.locked_until).getTime() > Date.now()) return;
   const fails = Number(row.fails) + 1;
   if (fails >= 5) {
     await sql(
-      "update login_attempts set fails = $2, locked_until = now() + interval '30 minutes' where account_id = $1 and locked_until is null",
+      "update login_attempts set fails = $2, locked_until = now() + interval '10 minutes' where account_id = $1 and (locked_until is null or locked_until <= now())",
       [accountId, fails],
     );
     return;
@@ -135,6 +135,35 @@ async function noteLoginFailure(accountId) {
 
 async function clearLoginFailures(accountId) {
   await sql("delete from login_attempts where account_id = $1", [accountId]);
+}
+
+function clientHash(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",").map((part) => part.trim()).filter(Boolean);
+  const raw = (forwarded[0] || String(req.headers["x-real-ip"] || "") || req.socket?.remoteAddress || "unknown").slice(0, 80);
+  return createHash("sha256").update(raw).digest("hex").slice(0, 32);
+}
+
+async function bumpWindow(bucket, seconds) {
+  const rows = await sql(
+    `insert into request_windows (bucket, hits, window_until)
+     values ($1, 1, now() + ($2::int * interval '1 second'))
+     on conflict (bucket) do update
+     set hits = case when request_windows.window_until < now() then 1 else request_windows.hits + 1 end,
+         window_until = case when request_windows.window_until < now() then now() + ($2::int * interval '1 second') else request_windows.window_until end
+     returning hits`,
+    [bucket, seconds],
+  );
+  return Number(rows[0]?.hits || 0);
+}
+
+async function takeSignup(hash) {
+  const open = await sql("select hits from request_windows where bucket = 'signup-global' and window_until > now()");
+  if (Number(open[0]?.hits || 0) >= 1) return "slow";
+  const clientHits = await bumpWindow(`signup:${hash}`, 24 * 60 * 60);
+  if (clientHits > 2) return "client";
+  const globalHits = await bumpWindow("signup-global", 20);
+  if (globalHits > 1) return "slow";
+  return "ok";
 }
 
 async function readJson(req) {
@@ -317,6 +346,7 @@ async function login(req, res) {
     if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
     return send(res, 401, { error: LOGIN_FAIL });
   }
+  if (await loginLocked(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
@@ -356,6 +386,9 @@ async function register(req, res) {
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
   const total = await sql("select count(*)::int as n from accounts where role = 'user'");
   if (Number(total[0]?.n || 0) >= 40) return send(res, 429, { error: "Yeni kayıt şu an kapalı." });
+  const slot = await takeSignup(clientHash(req));
+  if (slot === "client") return send(res, 429, { error: "Bu ağdan yeni kayıt şu an kapalı." });
+  if (slot === "slow") return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
   const account = await createAccount({
     id,
     name,
@@ -475,6 +508,20 @@ async function review(req, res) {
   send(res, 200, { ok: true, people: await people() });
 }
 
+async function removeAccount(req, res) {
+  const admin = await currentAccount(req);
+  if (!admin || admin.role !== "admin") return send(res, 403, { error: "Bu sayfa yönetici hesabında." });
+  const body = await readJson(req);
+  const id = cleanId(body.id);
+  if (!id || id === ownerId) return send(res, 400, { error: "Bu hesap silinemez." });
+  const found = await sql("select id from accounts where id = $1 and role = 'user' limit 1", [id]);
+  if (!found.length) return send(res, 404, { error: "Hesap bulunamadı." });
+  await sql("delete from sessions where account_id = $1", [id]);
+  await sql("delete from verification_requests where account_id = $1", [id]);
+  await sql("delete from accounts where id = $1 and role = 'user'", [id]);
+  send(res, 200, { ok: true });
+}
+
 async function adminRequests(req, res) {
   const account = await currentAccount(req);
   if (!account || account.role !== "admin") return send(res, 403, { error: "Bu sayfa yönetici hesabında." });
@@ -536,6 +583,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/verify") return applyVerify(req, res);
   if (req.method === "GET" && (pathname === "/api/admin/requests" || pathname === "/api/admin-requests")) return adminRequests(req, res);
   if (req.method === "POST" && (pathname === "/api/admin/review" || pathname === "/api/admin-review")) return review(req, res);
+  if (req.method === "POST" && pathname === "/api/account-remove") return removeAccount(req, res);
   return send(res, 404, { error: "Bulunamadı." });
 }
 
@@ -598,6 +646,13 @@ function boot() {
          fails integer not null default 0,
          window_until timestamptz not null,
          locked_until timestamptz
+       )`,
+    );
+    await sql(
+      `create table if not exists request_windows (
+         bucket text primary key,
+         hits integer not null default 0,
+         window_until timestamptz not null
        )`,
     );
     await clearSamples();

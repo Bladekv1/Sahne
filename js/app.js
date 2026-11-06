@@ -961,7 +961,7 @@ function adminScreen() {
   const cards = pending.length
     ? pending.map((item) => `<article class="verify-card"><strong>${userLabel(item.accountId)}</strong><span>${esc(item.fullName)} · ${esc(item.category)}</span><p>${esc(item.reason)}</p>${item.audience ? `<p>${esc(item.audience)}</p>` : ""}${item.link ? `<a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">${esc(item.link)}</a>` : ""}<div class="row-btns"><button type="button" class="btn primary" data-act="review-verify" data-id="${esc(item.id)}" data-status="approved">Onayla</button><button type="button" class="btn" data-act="review-verify" data-id="${esc(item.id)}" data-status="rejected">Reddet</button></div></article>`).join("")
     : `<p class="empty">Bekleyen başvuru yok.</p>`;
-  const accounts = adminState.accounts.map((item) => `<div class="history-row"><strong>${userLabel(item.id)}</strong><span>${esc(item.name)}</span><time>${item.role === "admin" ? "yönetici" : "hesap"}</time></div>`).join("");
+  const accounts = adminState.accounts.map((item) => `<div class="history-row"><strong>${userLabel(item.id)}</strong><span>${esc(item.name)}</span><time>${item.role === "admin" ? "yönetici" : "hesap"}</time>${item.role === "admin" ? "" : `<button type="button" data-act="remove-account" data-id="${esc(item.id)}">Sil</button>`}</div>`).join("");
   return `<div class="form-page"><h2>Mavi tik başvuruları</h2>${cards}<h2 class="settings-sec">Hesaplar</h2>${accounts}</div>`;
 }
 
@@ -1766,6 +1766,20 @@ document.body.addEventListener("click", (event) => {
       render();
       toast(status === "approved" ? "Mavi tik verildi" : "Başvuru reddedildi");
     }).catch((error) => toast(error.message || "İşlenmedi."));
+  } else if (act === "remove-account") {
+    const id = zone.dataset.id || "";
+    fetch("/api/account-remove", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Hesap silinmedi.");
+      adminState = { status: "idle", requests: [], accounts: [], error: "" };
+      render();
+      toast("Hesap silindi");
+    }).catch((error) => toast(error.message || "Hesap silinmedi."));
   } else if (act === "logout-do") {
     store.logout().finally(() => {
       authView = "login";

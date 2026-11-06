@@ -15,6 +15,7 @@ const POSTS_PER_ACCOUNT = 12;
 const COMMENTS_PER_ACCOUNT = 20;
 const MESSAGES_PER_ACCOUNT = 40;
 const STORIES_PER_ACCOUNT = 8;
+const REPLIES_PER_ACCOUNT = 20;
 const UNREFERENCED = `not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
   and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
   and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
@@ -565,11 +566,6 @@ async function sendMedia(req, res, id, currentAccount) {
     res.end();
     return;
   }
-  if (pace(`media:${viewer.id}`, 90, 60 * 1000)) {
-    res.writeHead(429, SHIELD);
-    res.end();
-    return;
-  }
   const linked = await sql(`select 1 from media m where m.id = $1 and not (${UNREFERENCED}) limit 1`, [id]);
   const fresh = viewer.id === row.account_id && Date.now() - new Date(row.created_at).getTime() < 30 * 60 * 1000;
   if (!linked.length && !fresh) {
@@ -583,9 +579,13 @@ async function sendMedia(req, res, id, currentAccount) {
     res.end();
     return;
   }
-  const stored = await sql("select bytes from media where id = $1", [id]);
-  const bytes = asBuffer(stored[0]?.bytes);
-  const total = bytes.length;
+  const measured = await sql("select octet_length(bytes)::int as size from media where id = $1", [id]);
+  const total = Number(measured[0]?.size || 0);
+  if (!total) {
+    res.writeHead(404, SHIELD);
+    res.end();
+    return;
+  }
   const headers = {
     "content-type": row.mime,
     ...SHIELD,
@@ -596,19 +596,47 @@ async function sendMedia(req, res, id, currentAccount) {
   const match = /^bytes=(\d+)-(\d*)$/.exec(range);
   if (match) {
     const start = Number(match[1]);
-    const end = match[2] ? Number(match[2]) : total - 1;
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || start >= total || end >= total) {
+    const end = match[2] ? Number(match[2]) : Math.min(total - 1, start + (512 * 1024) - 1);
+    const length = end - start + 1;
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || start >= total || end >= total || length > 512 * 1024) {
       res.writeHead(416, { "content-range": `bytes */${total}` });
       res.end();
       return;
     }
-    res.writeHead(206, { ...headers, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${total}` });
-    res.end(bytes.subarray(start, end + 1));
+    if (await dbPace(`media-range:${viewer.id}`, 80, 10 * 60)) {
+      res.writeHead(429, SHIELD);
+      res.end();
+      return;
+    }
+    const sliced = await sql("select substring(bytes from $2::int for $3::int) as chunk from media where id = $1", [id, start + 1, length]);
+    const chunk = asBuffer(sliced[0]?.chunk);
+    res.writeHead(206, { ...headers, "content-length": chunk.length, "content-range": `bytes ${start}-${start + chunk.length - 1}/${total}` });
+    res.end(chunk);
     return;
   }
-  res.writeHead(200, { ...headers, "content-length": total });
+  if (await dbPace(`media-full:${viewer.id}`, 20, 10 * 60)) {
+    res.writeHead(429, SHIELD);
+    res.end();
+    return;
+  }
+  const stored = await sql("select bytes from media where id = $1", [id]);
+  const bytes = asBuffer(stored[0]?.bytes);
+  res.writeHead(200, { ...headers, "content-length": bytes.length });
   if (req.method === "HEAD") res.end();
   else res.end(bytes);
+}
+
+async function dbPace(key, limit, seconds) {
+  const rows = await sql(
+    `insert into request_windows (bucket, hits, window_until)
+     values ($1, 1, now() + ($2::int * interval '1 second'))
+     on conflict (bucket) do update
+     set hits = case when request_windows.window_until < now() then 1 else request_windows.hits + 1 end,
+         window_until = case when request_windows.window_until < now() then now() + ($2::int * interval '1 second') else request_windows.window_until end
+     returning hits`,
+    [key, seconds],
+  );
+  return Number(rows[0]?.hits || 0) > limit;
 }
 
 async function createPost(req, res, send, currentAccount) {
@@ -871,6 +899,8 @@ async function replyStory(req, res, send, currentAccount) {
   if (!rows.length) fail(404, "Hikaye bulunamadı.");
   if (!(await canSeeAccount(account.id, rows[0].account_id))) fail(404, "Hikaye bulunamadı.");
   if (rows[0].account_id === account.id) fail(400, "Kendi hikayene yanıt gönderilmez.");
+  const held = await sql("select count(*)::int as n from story_replies where account_id = $1", [account.id]);
+  if (Number(held[0]?.n || 0) >= REPLIES_PER_ACCOUNT) fail(400, "Yanıt sınırına ulaştın.");
   const id = hex(randomBytes(16));
   await sql("insert into story_replies (id, story_id, account_id, body) values ($1, $2, $3, $4)", [id, storyId, account.id, text]);
   send(res, 200, { ok: true });
