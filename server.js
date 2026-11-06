@@ -69,11 +69,13 @@ function sameOrigin(req) {
 }
 
 function hitBucket(key, limit, windowMs) {
+  if (typeof key !== "string" || key.length > 64) return true;
   const now = Date.now();
-  if (buckets.size > 4000) {
+  if (buckets.size > 500) {
     for (const [name, slot] of buckets) {
       if (slot.until < now) buckets.delete(name);
     }
+    while (buckets.size > 500) buckets.delete(buckets.keys().next().value);
   }
   const slot = buckets.get(key);
   if (!slot || slot.until < now) {
@@ -83,6 +85,36 @@ function hitBucket(key, limit, windowMs) {
   if (slot.count >= limit) return true;
   slot.count += 1;
   return slot.count > limit;
+}
+
+const loginGuards = new Map();
+
+function loginPause(id) {
+  const now = Date.now();
+  if (loginGuards.size > 500) {
+    for (const [name, slot] of loginGuards) {
+      if (slot.until < now) loginGuards.delete(name);
+    }
+  }
+  const slot = loginGuards.get(id);
+  if (!slot || slot.until < now) return false;
+  return slot.fails >= 8 && now < slot.next;
+}
+
+function loginMissed(id) {
+  const now = Date.now();
+  const slot = loginGuards.get(id);
+  const fresh = !slot || slot.until < now;
+  const fails = Math.min((fresh ? 0 : slot.fails) + 1, 8);
+  loginGuards.set(id, {
+    fails,
+    until: fresh ? now + 10 * 60 * 1000 : slot.until,
+    next: fails >= 8 ? now + 10 * 1000 : 0,
+  });
+}
+
+function loginCleared(id) {
+  loginGuards.delete(id);
 }
 
 async function readJson(req) {
@@ -255,6 +287,7 @@ async function login(req, res) {
     if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
     return send(res, 401, { error: LOGIN_FAIL });
   }
+  if (loginPause(account.id)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
@@ -262,21 +295,28 @@ async function login(req, res) {
   } catch {
     actual = "";
   }
-  if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: LOGIN_FAIL });
+  if (!passwordMatches(actual, account.hash)) {
+    loginMissed(account.id);
+    return send(res, 401, { error: LOGIN_FAIL });
+  }
+  loginCleared(account.id);
   return openSession(res, req, account, false);
 }
 
 async function register(req, res) {
   const body = await readJson(req);
-  const id = String(body.username || "").trim().toLowerCase();
+  const id = String(body.username || "").trim().toLowerCase().slice(0, 30);
   const name = String(body.name || "").trim().slice(0, 40);
   const born = String(body.born || "");
   const password = String(body.password || "");
-  if (hitBucket(`register:${id || "blank"}`, 5, 10 * 60 * 1000)) {
-    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
-  }
   if (!/^[a-z0-9._]{3,30}$/.test(id) || !/[a-z]/.test(id)) {
+    if (hitBucket("register:invalid", 20, 10 * 60 * 1000)) {
+      return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+    }
     return send(res, 400, { error: "Kullanıcı adı 3–30 karakter olmalı ve en az bir harf içermeli." });
+  }
+  if (hitBucket(`register:${id}`, 5, 10 * 60 * 1000)) {
+    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   }
   if (reserved.has(id)) return send(res, 400, { error: "Bu kullanıcı adı kullanılıyor." });
   if (!name) return send(res, 400, { error: "Adını yaz." });
@@ -284,16 +324,6 @@ async function register(req, res) {
   if (!validBorn(born)) return send(res, 400, { error: "Doğum yılı 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
-  const opened = await sql(
-    `select
-       count(*) filter (where created_at > now() - interval '10 minutes')::int as burst,
-       count(*) filter (where created_at > now() - interval '24 hours')::int as day
-     from accounts
-     where role = 'user'`,
-  );
-  if (Number(opened[0]?.burst || 0) >= 8 || Number(opened[0]?.day || 0) >= 40) {
-    return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
-  }
   const account = await createAccount({
     id,
     name,

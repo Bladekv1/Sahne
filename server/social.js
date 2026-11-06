@@ -11,6 +11,7 @@ const MAX_IMAGE = 4 * 1024 * 1024;
 const MAX_VIDEO = 8 * 1024 * 1024;
 const ACCOUNT_QUOTA = 8 * 1024 * 1024;
 const ACCOUNT_FILES = 6;
+const TOTAL_CAP = 512 * 1024 * 1024;
 const UNREFERENCED = `not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
   and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
   and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
@@ -513,6 +514,8 @@ async function upload(req, res, send, currentAccount) {
   const bytes = await readBody(req, limit);
   if (bytes.length < 32) fail(400, "Dosya boş görünüyor.");
   if (usage.bytes + bytes.length > ACCOUNT_QUOTA) fail(413, "Hesabının depolama alanı doldu.");
+  const total = await sql("select coalesce(sum(octet_length(bytes)), 0)::bigint as bytes from media");
+  if (asCount(total[0]?.bytes) + bytes.length > TOTAL_CAP) fail(413, "Depolama doldu. Daha sonra yeniden dene.");
   const id = hex(randomBytes(16));
   await sql("insert into media (id, account_id, mime, bytes) values ($1, $2, $3, $4)", [id, account.id, mime, bytes]);
   send(res, 200, { id });
