@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { ME as ownerId } from "./js/data.js";
 import { sql } from "./server/db.js";
-import { clearSamples, ensureProfile, handleSocial } from "./server/social.js";
+import { clearSamples, ensureProfile, handleSocial, sweepMedia } from "./server/social.js";
 
 const pbkdf2Async = promisify(pbkdf2);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
@@ -67,6 +67,7 @@ function hitBucket(key, limit, windowMs) {
     buckets.set(key, { count: 1, until: now + windowMs });
     return false;
   }
+  if (slot.count >= limit) return true;
   slot.count += 1;
   return slot.count > limit;
 }
@@ -240,9 +241,6 @@ async function login(req, res) {
     if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
     return send(res, 401, { error: LOGIN_FAIL });
   }
-  if (hitBucket(`login:${account.id}`, 8, 10 * 60 * 1000)) {
-    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
-  }
   const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
@@ -272,6 +270,16 @@ async function register(req, res) {
   if (!validBorn(born)) return send(res, 400, { error: "Doğum yılı 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
+  const opened = await sql(
+    `select
+       count(*) filter (where created_at > now() - interval '10 minutes')::int as burst,
+       count(*) filter (where created_at > now() - interval '24 hours')::int as day
+     from accounts
+     where role = 'user'`,
+  );
+  if (Number(opened[0]?.burst || 0) >= 8 || Number(opened[0]?.day || 0) >= 40) {
+    return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
+  }
   const account = await createAccount({
     id,
     name,
@@ -509,6 +517,7 @@ function boot() {
     await sql("select 1 as ok");
     await clearSamples();
     await ensureOwner();
+    await sweepMedia();
   })();
   return booted;
 }

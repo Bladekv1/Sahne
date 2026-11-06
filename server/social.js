@@ -9,8 +9,13 @@ const paces = new Map();
 const worldCache = new Map();
 const MAX_IMAGE = 4 * 1024 * 1024;
 const MAX_VIDEO = 8 * 1024 * 1024;
-const ACCOUNT_QUOTA = 24 * 1024 * 1024;
-const ACCOUNT_FILES = 12;
+const ACCOUNT_QUOTA = 8 * 1024 * 1024;
+const ACCOUNT_FILES = 6;
+const UNREFERENCED = `not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
+  and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
+  and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
+  and not exists (select 1 from profiles pr where pr.avatar = '/api/media/' || m.id)
+  and not exists (select 1 from highlights h where h.cover = '/api/media/' || m.id or h.frames like '%/api/media/' || m.id || '%')`;
 const SHIELD = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -457,6 +462,7 @@ async function ownedMedia(accountId, mediaId) {
 async function sendWorld(req, res, send, currentAccount) {
   const account = await currentAccount(req);
   if (!account) return send(res, 401, { error: "Önce giriş yap." });
+  await sweepMedia();
   if (pace(`world:${account.id}`, 20, 60 * 1000)) return send(res, 429, { error: "Çok sık yenileniyor. Biraz bekle." });
   const cached = worldCache.get(account.id);
   if (cached && Date.now() - cached.at < 4000) return send(res, 200, cached.body);
@@ -465,17 +471,26 @@ async function sendWorld(req, res, send, currentAccount) {
   send(res, 200, body);
 }
 
-async function releaseUnused(accountId) {
-  await sql(
-    `delete from media m
-     where m.account_id = $1
-       and m.created_at < now() - interval '15 minutes'
-       and not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
-       and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
-       and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
-       and not exists (select 1 from profiles pr where pr.avatar = '/api/media/' || m.id)`,
-    [accountId],
-  );
+let sweptAt = 0;
+
+export async function sweepMedia() {
+  const now = Date.now();
+  if (now - sweptAt < 30 * 1000) return;
+  sweptAt = now;
+  await sql("delete from stories where created_at <= now() - interval '24 hours'");
+  await sql(`delete from media m where m.created_at < now() - interval '15 minutes' and ${UNREFERENCED}`);
+}
+
+async function dropUnreferenced(ids) {
+  for (const id of ids) {
+    if (!MEDIA_ID.test(id)) continue;
+    await sql(`delete from media m where m.id = $1 and ${UNREFERENCED}`, [id]);
+  }
+}
+
+function mediaIdFrom(src) {
+  const match = /^\/api\/media\/([a-f0-9]{32})$/.exec(String(src || ""));
+  return match ? match[1] : "";
 }
 
 async function mediaUsage(accountId) {
@@ -488,10 +503,10 @@ async function mediaUsage(accountId) {
 
 async function upload(req, res, send, currentAccount) {
   const account = await requireUser(currentAccount, req);
-  if (pace(`upload:${account.id}`, 8, 10 * 60 * 1000)) fail(429, "Çok fazla dosya. Biraz bekle.");
+  if (pace(`upload:${account.id}`, 4, 10 * 60 * 1000)) fail(429, "Çok fazla dosya. Biraz bekle.");
   const mime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   if (!MIMES.has(mime)) fail(400, "JPG, PNG, WEBP, GIF veya MP4 seç.");
-  await releaseUnused(account.id);
+  await sweepMedia();
   const usage = await mediaUsage(account.id);
   if (usage.files >= ACCOUNT_FILES || usage.bytes >= ACCOUNT_QUOTA) fail(413, "Hesabının depolama alanı doldu.");
   const limit = mime.startsWith("video/") ? MAX_VIDEO : MAX_IMAGE;
@@ -509,7 +524,7 @@ async function sendMedia(req, res, id, currentAccount) {
     res.end();
     return;
   }
-  const rows = await sql("select account_id, mime from media where id = $1", [id]);
+  const rows = await sql("select account_id, mime, created_at from media where id = $1", [id]);
   const row = rows[0];
   if (!row || !MIMES.has(row.mime)) {
     res.writeHead(404, SHIELD);
@@ -527,7 +542,14 @@ async function sendMedia(req, res, id, currentAccount) {
     res.end();
     return;
   }
-  const allowed = viewer.id === row.account_id || await canSeeAccount(viewer.id, row.account_id);
+  const linked = await sql(`select 1 from media m where m.id = $1 and not (${UNREFERENCED}) limit 1`, [id]);
+  const fresh = viewer.id === row.account_id && Date.now() - new Date(row.created_at).getTime() < 30 * 60 * 1000;
+  if (!linked.length && !fresh) {
+    res.writeHead(404, SHIELD);
+    res.end();
+    return;
+  }
+  const allowed = fresh || viewer.id === row.account_id || await canSeeAccount(viewer.id, row.account_id);
   if (!allowed) {
     res.writeHead(404, SHIELD);
     res.end();
@@ -612,8 +634,16 @@ async function removePost(req, res, send, currentAccount) {
   const account = await requireUser(currentAccount, req);
   const body = await readJson(req);
   const id = String(body.id || "");
-  const rows = await sql("delete from posts where id = $1 and account_id = $2 returning id", [id, account.id]);
-  if (!rows.length) fail(404, "Gönderi bulunamadı.");
+  const owned = await sql("select id from posts where id = $1 and account_id = $2", [id, account.id]);
+  if (!owned.length) fail(404, "Gönderi bulunamadı.");
+  const files = await sql(
+    `select src from post_media where post_id = $1
+     union select src from posts where id = $1
+     union select poster from posts where id = $1`,
+    [id],
+  );
+  await sql("delete from posts where id = $1 and account_id = $2", [id, account.id]);
+  await dropUnreferenced(files.map((row) => mediaIdFrom(row.src)));
   send(res, 200, { ok: true });
 }
 
