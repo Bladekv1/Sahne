@@ -146,7 +146,7 @@ function safeHash(href) {
 function sideNav(r) {
   const mail = store.unreadTotal();
   const items = [
-    ["#/", "akis", "Ana sayfa", r.head === "akis" ? "homeFill" : "home"],
+    ["#/", "akis", "Ana Sayfa", r.head === "akis" ? "homeFill" : "home"],
     ["search", "ara", "Ara", "search"],
     ["#/kesfet", "kesfet", "Keşfet", "compass"],
     ["#/reels", "reels", "Reels", r.head === "reels" ? "reelsFill" : "reels"],
@@ -499,31 +499,49 @@ function personRow(user, mode) {
   return `<div class="person">${avatar(user, 48, true)}<a class="copy" href="${href}"><strong>${userLabel(user.id)}</strong><small>${esc(user.name)}</small></a>${mode === "message" ? "" : follow}</div>`;
 }
 
+function profilePhoto(user) {
+  const pack = store.packFor(user.id);
+  const face = avatar(user, 86);
+  if (!pack) return `<span class="ava-ring">${face}</span>`;
+  return `<a href="#/h/${pack.user}/${store.firstUnseen(pack)}" aria-label="Hikaye"><span class="ring ${store.storySeen(pack) ? "seen" : ""}">${face}</span></a>`;
+}
+
+function profileTabs(base, tab, own) {
+  const items = [
+    ["grid", base, "Gönderiler", "grid"],
+    ["reels", `${base}/reels`, "Reels", "reels"],
+  ];
+  if (own) items.push(["kayit", `${base}/kayit`, "Kaydedilenler", "bookmark"]);
+  items.push(["etiket", `${base}/etiket`, "Etiketlenenler", "tag"]);
+  return `<nav class="ptabs">${items.map(([id, href, label, glyph]) => `<a href="${href}" class="${tab === id ? "on" : ""}">${icon(glyph)}<span>${label}</span></a>`).join("")}</nav>`;
+}
+
 function profileScreen(id, tab) {
   const user = getUser(id);
   if (!user) return missing("Bu hesap yok.");
-  const base = user.id === me() ? "#/profil" : `#/u/${user.id}`;
+  const own = user.id === me();
+  const base = own ? "#/profil" : `#/u/${user.id}`;
+  const shown = tab === "kayit" && !own ? "grid" : tab;
   const posts = store.postsBy(user.id);
   const reels = store.reelsBy(user.id);
   const tagged = store.tagged(user.id);
-  const pack = store.packFor(user.id);
-  const photo = pack
-    ? `<a href="#/h/${pack.user}/${store.firstUnseen(pack)}" aria-label="Hikaye"><span class="ring ${store.storySeen(pack) ? "seen" : ""}">${avatar(user, 86)}</span></a>`
-    : avatar(user, 86);
-  const actions = user.id === me()
+  const photo = profilePhoto(user);
+  const actions = own
     ? `<a class="btn" href="#/duzenle">Profili düzenle</a><button type="button" class="btn" data-act="qr-open">Profili paylaş</button>`
     : `${followBtn(user.id, true)}<a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
   const lights = store.highlightsFor(user.id).map((item) => `<a href="#/h/${item.id}/0"><span class="hl"><img src="${safeSrc(item.cover)}" alt=""></span>${esc(item.title)}</a>`).join("");
-  const addLight = user.id === me() ? `<a href="#/yeni/hikaye"><span class="hl add">${icon("plus")}</span>Yeni</a>` : "";
+  const addLight = own ? `<a href="#/yeni/hikaye"><span class="hl add">${icon("plus")}</span>Yeni</a>` : "";
   const lockedOut = profileLocked(user);
   const body = lockedOut
     ? `<p class="empty lock-note">Bu hesap gizli. Takip isteğin onaylanırsa gönderiler, hikayeler ve listeler açılır.</p>`
-    : tab === "reels"
+    : shown === "reels"
       ? reelGrid(reels)
-      : tab === "etiket"
+      : shown === "etiket"
         ? photoGrid(tagged)
-        : photoGrid(posts);
-  if (isDesktop()) return desktopProfile(user, photo, actions, addLight, lights, base, tab, body);
+        : shown === "kayit"
+          ? photoGrid(store.savedPosts())
+          : photoGrid(posts);
+  if (isDesktop()) return desktopProfile(user, photo, actions, addLight, lights, base, shown, body);
   const note = store.noteOf(user);
   const pronouns = store.pronounsOf(user);
   const category = store.categoryOf(user);
@@ -545,40 +563,43 @@ function profileScreen(id, tab) {
     ${panel}
     <div class="row-btns">${actions}</div>
     <div class="highlights">${lockedOut ? "" : `${addLight}${lights}`}</div>
-    <nav class="ptabs">
-      <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
-      <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
-      <a href="${base}/etiket" class="${tab === "etiket" ? "on" : ""}" aria-label="Etiketlenenler">${icon("tag")}</a>
-    </nav>
+    ${profileTabs(base, shown, own)}
     ${body}`;
 }
 
 function desktopProfile(user, photo, _actions, addLight, lights, base, tab, body) {
+  const own = user.id === me();
   const pronouns = store.pronounsOf(user);
   const category = store.categoryOf(user);
   const link = safeHttp(store.linkOf(user));
-  const locked = user.id === me() && store.isPrivate()
+  const locked = own && store.isPrivate()
     ? `<p class="hint">Gizli hesap</p>`
     : profileLocked(user)
       ? `<p class="hint">Bu hesap gizli. Takip isteği gönder, onaylarsa gönderileri görürsün.</p>`
       : "";
-  const buttons = user.id === me()
+  const buttons = own
     ? `<a class="btn" href="#/duzenle">Profili düzenle</a><a class="btn" href="#/arsiv">Arşivi gör</a>`
     : `${followBtn(user.id, true)}<a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
+  const gear = own
+    ? `<a class="icon-btn gear" href="#/ayarlar" aria-label="Ayarlar">${icon("gear")}</a>`
+    : `<button type="button" class="icon-btn gear" data-act="more" data-user="${esc(user.id)}" aria-label="Diğer">${icon("more")}</button>`;
   const bio = esc(store.bioOf(user)).replaceAll("\n", "<br>");
-  return `<header class="desk-profile"><div class="desk-ava">${photo}</div><div>
-      <h1>${userLabel(user.id)}</h1>
-      <ul class="desk-stats"><li><strong>${formatCount(store.postsBy(user.id).length)}</strong> gönderi</li>${profileLocked(user) ? `<li><strong>${formatCount(store.followerCount(user))}</strong> takipçi</li><li><strong>${formatCount(store.followingCount(user))}</strong> takip</li>` : `<li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong> takipçi</a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong> takip</a></li>`}</ul>
-      <div class="desk-bio"><strong>${esc(store.displayName(user))}</strong>${pronouns ? ` <span>${esc(pronouns)}</span>` : ""}${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${bio}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https:\/\//, ""))}</a>` : ""}</div>
-    </div></header>
-    <div class="desk-actions">${buttons}</div>
-    <div class="highlights desk-highlights">${profileLocked(user) ? "" : `${addLight}${lights}`}</div>
-    <nav class="ptabs">
-      <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
-      <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
-      <a href="${base}/etiket" class="${tab === "etiket" ? "on" : ""}" aria-label="Etiketlenenler">${icon("tag")}</a>
-    </nav>
-    ${body}`;
+  const stats = profileLocked(user)
+    ? `<li><strong>${formatCount(store.followerCount(user))}</strong> takipçi</li><li><strong>${formatCount(store.followingCount(user))}</strong> takip</li>`
+    : `<li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong> takipçi</a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong> takip</a></li>`;
+  return `<section class="ig-profile">
+    <header class="ig-head">
+      <div class="ig-ava">${photo}</div>
+      <div class="ig-info">
+        <div class="ig-name-row"><h1>${userLabel(user.id)}</h1><div class="ig-btns">${buttons}</div>${gear}</div>
+        <ul class="desk-stats"><li><strong>${formatCount(store.postsBy(user.id).length)}</strong> gönderi</li>${stats}</ul>
+        <div class="desk-bio"><strong>${esc(store.displayName(user))}</strong>${pronouns ? ` <span class="pronouns">${esc(pronouns)}</span>` : ""}${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${bio}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https:\/\//, ""))}</a>` : ""}</div>
+      </div>
+    </header>
+    <div class="highlights">${profileLocked(user) ? "" : `${addLight}${lights}`}</div>
+    ${profileTabs(base, tab, own)}
+    ${body}
+  </section>`;
 }
 
 function activityTools(canSelect) {
@@ -953,8 +974,8 @@ function screen(r) {
   if (r.head === "kesfet") return exploreScreen();
   if (r.head === "reels") return reelsScreen(r.parts[1] || "");
   if (r.head === "mesaj") return r.parts[1] ? chatScreen(r.parts[1]) : inboxScreen();
-  if (r.head === "profil") return profileScreen(me(), r.parts[1] === "reels" || r.parts[1] === "etiket" ? r.parts[1] : "grid");
-  if (r.head === "u") return profileScreen(r.parts[1], r.parts[2] === "reels" || r.parts[2] === "etiket" ? r.parts[2] : "grid");
+  if (r.head === "profil") return profileScreen(me(), ["reels", "etiket", "kayit"].includes(r.parts[1]) ? r.parts[1] : "grid");
+  if (r.head === "u") return profileScreen(r.parts[1], ["reels", "etiket", "kayit"].includes(r.parts[2]) ? r.parts[2] : "grid");
   if (r.head === "g") return postScreen(r.parts[1]);
   if (r.head === "bildirim") {
     store.seeActivity();

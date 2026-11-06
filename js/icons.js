@@ -24,6 +24,7 @@ const paths = {
   bell: '<path d="M6 16V10a6 6 0 1 1 12 0v6l1.2 2H4.8L6 16Z"/><path d="M10 18a2 2 0 0 0 4 0"/>',
   play: '<path d="M8 6.5v11l10-5.5-10-5.5Z" fill="currentColor" stroke="none"/>',
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.7 7.7 0 0 0 .06-2l1.7-1.3-1.8-3.1-2 .6a7.6 7.6 0 0 0-1.7-1L15.2 3h-3.4l-.5 2.2a7.6 7.6 0 0 0-1.7 1l-2-.6L5.8 8.7 7.5 10a7.7 7.7 0 0 0 0 2l-1.7 1.3 1.8 3.1 2-.6a7.6 7.6 0 0 0 1.7 1l.5 2.2h3.4l.5-2.2a7.6 7.6 0 0 0 1.7-1l2 .6 1.8-3.1L19.4 13Z"/>',
 };
 
 export function icon(name) {
