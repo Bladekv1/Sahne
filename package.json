@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "node scripts/migrate.mjs",
+    "build": "node scripts/migrate.mjs && node scripts/build-static.mjs",
     "start": "node server.js"
   },
   "dependencies": {

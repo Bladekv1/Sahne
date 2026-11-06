@@ -461,29 +461,47 @@ function serveStatic(req, res, pathname) {
   createReadStream(file).pipe(res);
 }
 
-const port = Number(process.env.PORT) || 8765;
-const server = createServer((req, res) => {
-  let pathname = "/";
-  try {
-    pathname = new URL(req.url || "/", "http://localhost").pathname;
-  } catch {
-    res.writeHead(400);
-    res.end();
-    return;
-  }
-  const run = pathname.startsWith("/api/") ? handleApi(req, res, pathname) : Promise.resolve(serveStatic(req, res, pathname));
+let booted;
+function boot() {
+  booted ??= (async () => {
+    await sql("select 1 as ok");
+    await ensureOwner();
+  })();
+  return booted;
+}
+
+export function handleRequest(req, res) {
+  const run = (async () => {
+    await boot();
+    let pathname = "/";
+    try {
+      const url = new URL(req.url || "/", "http://localhost");
+      pathname = url.pathname;
+      if (!pathname.startsWith("/api/") && Array.isArray(req.query?.path)) {
+        pathname = `/api/${req.query.path.map((part) => encodeURIComponent(part)).join("/")}`;
+      }
+    } catch {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    if (pathname.startsWith("/api/")) return handleApi(req, res, pathname);
+    return serveStatic(req, res, pathname);
+  })();
   run.catch((error) => {
     const status = error.status || 500;
     if (status === 500) console.error("request failed");
     if (!res.headersSent) send(res, status, { error: status === 500 ? "Sunucu hatası." : error.message });
   });
-});
+}
 
-await sql("select 1 as ok");
-await ensureOwner();
-server.listen(port, "0.0.0.0", () => {
-  console.log(`bladekv1 listening on ${port}`);
-});
-
-process.on("SIGTERM", () => server.close(() => process.exit(0)));
-process.on("SIGINT", () => server.close(() => process.exit(0)));
+if (!process.env.VERCEL) {
+  const port = Number(process.env.PORT) || 8765;
+  const server = createServer(handleRequest);
+  await boot();
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`bladekv1 listening on ${port}`);
+  });
+  process.on("SIGTERM", () => server.close(() => process.exit(0)));
+  process.on("SIGINT", () => server.close(() => process.exit(0)));
+}
