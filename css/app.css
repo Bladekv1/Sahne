@@ -436,30 +436,22 @@ html[data-theme="dark"] .more-menu { background: #262626; }
 .more-menu a, .more-menu button { display: block; width: 100%; text-align: left; padding: 14px 16px; background: none; color: inherit; font-size: 15px; }
 .more-menu a:hover, .more-menu button:hover { background: var(--field); }
 .more-menu .danger { color: var(--danger); font-weight: 650; }
-.gate { min-height: 100%; display: flex; flex-direction: column; background: #000; color: #f5f5f5; }
-.gate-hero { padding: 28px 20px 4px; }
-.gate-hero h1 { margin: 0 0 14px; font-size: 28px; font-weight: 650; line-height: 1.15; letter-spacing: -0.03em; }
-.gate-collage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.gate-collage img { width: 100%; aspect-ratio: 3/4; object-fit: cover; border-radius: 18px; }
-.gate-card { padding: 12px 20px 36px; }
-.gate-card h2 { margin: 8px 0 16px; font-family: Georgia, "Iowan Old Style", serif; font-style: italic; font-weight: 700; font-size: 2rem; }
-.gate-card input, .gate-card select { width: 100%; margin: 6px 0; padding: 12px; border-radius: 8px; border: 1px solid #363636; background: #121212; color: #f5f5f5; font-size: 16px; }
-.gate-card .btn.primary { width: 100%; margin-top: 8px; background: #0095f6; color: #fff; border-radius: 24px; padding: 12px; }
-.gate-error { min-height: 1.2em; margin: 4px 0; color: #ed4956; font-size: 13px; }
-.gate-note, .gate-switch { color: #a8a8a8; text-align: center; font-size: 14px; }
-.gate-switch button, .gate-card .text-btn { color: #0095f6; font-weight: 700; }
-.born-label { display: block; margin: 10px 0 4px; color: #a8a8a8; font-size: 13px; }
-.born-row { display: grid; grid-template-columns: 0.8fr 1.3fr 1fr; gap: 8px; }
-.gate-accounts { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.gate-accounts button { padding: 6px 10px; border-radius: 999px; background: #1c1c1c; color: #f5f5f5; }
+.gate { min-height: 100%; display: grid; place-items: center; padding: 28px 16px 48px; background: #f3ecdf; color: #241c16; }
+.gate-card { width: min(440px, 100%); padding: 28px 22px 32px; background: #fffdf8; border: 1px solid #e4d3bc; border-radius: 22px; box-shadow: 0 16px 40px rgba(70, 42, 18, 0.08); }
+.gate-kicker { margin: 0; color: #9a5b32; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.gate-card h2 { margin: 4px 0 12px; font-family: Georgia, "Iowan Old Style", serif; font-weight: 700; font-size: 2rem; color: #241c16; }
+.gate-banner { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: #fff1e4; color: #6b3b22; font-size: 14px; line-height: 1.4; }
+.gate-card label { display: block; margin: 10px 0 0; color: #6d5848; font-size: 13px; font-weight: 650; }
+.gate-card input, .gate-card select { width: 100%; margin: 6px 0; padding: 12px; border-radius: 12px; border: 1px solid #e4d3bc; background: #fff; color: #241c16; font-size: 16px; }
+.gate-card .btn.primary { width: 100%; margin-top: 12px; background: #c4552a; color: #fffdf8; border-radius: 12px; padding: 12px; }
+.gate-error { min-height: 1.2em; margin: 8px 0 0; color: #9d2c2c; font-size: 13px; }
+.gate-note, .gate-switch { color: #6d5848; text-align: left; font-size: 14px; line-height: 1.45; }
+.gate-switch { margin-top: 16px; }
+.gate-switch button, .gate-card .text-btn { color: #9a5b32; font-weight: 700; }
+.gate-accounts { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.gate-accounts button { padding: 6px 10px; border-radius: 999px; background: #f3ecdf; color: #241c16; }
 #app.gate-mode .sidenav, #app.gate-mode #rail, #app.gate-mode #topbar, #app.gate-mode #msgpill { display: none !important; }
-#app.gate-mode #stage, #app.gate-mode .workspace, #app.gate-mode .columns { width: 100% !important; max-width: none; }
-@media (min-width: 1024px) {
-  .gate { flex-direction: row; align-items: center; justify-content: center; gap: 64px; min-height: 100%; padding: 24px; }
-  .gate-hero { width: min(460px, 42vw); padding: 0; }
-  .gate-hero h1 { font-size: 42px; }
-  .gate-card { width: 400px; padding: 28px 24px 32px; background: #121212; border: 1px solid #262626; border-radius: 16px; }
-}
+#app.gate-mode #stage, #app.gate-mode .workspace, #app.gate-mode .columns { width: 100% !important; max-width: none; background: #f3ecdf; }
 
 .reels { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; background: #000; }
 .reel {
