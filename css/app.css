@@ -440,22 +440,104 @@ html[data-theme="dark"] .more-menu { background: #262626; }
 .more-menu a, .more-menu button { display: block; width: 100%; text-align: left; padding: 14px 16px; background: none; color: inherit; font-size: 15px; }
 .more-menu a:hover, .more-menu button:hover { background: var(--field); }
 .more-menu .danger { color: var(--danger); font-weight: 650; }
-.gate { min-height: 100%; display: grid; place-items: center; padding: 28px 16px 48px; background: #f3ecdf; color: #241c16; }
-.gate-card { width: min(440px, 100%); padding: 28px 22px 32px; background: #fffdf8; border: 1px solid #e4d3bc; border-radius: 22px; box-shadow: 0 16px 40px rgba(70, 42, 18, 0.08); }
-.gate-kicker { margin: 0; color: #9a5b32; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
-.gate-card h2 { margin: 4px 0 12px; font-family: Georgia, "Iowan Old Style", serif; font-weight: 700; font-size: 2rem; color: #241c16; }
-.gate-banner { margin: 0 0 16px; padding: 12px 14px; border-radius: 12px; background: #fff1e4; color: #6b3b22; font-size: 14px; line-height: 1.4; }
-.gate-card label { display: block; margin: 10px 0 0; color: #6d5848; font-size: 13px; font-weight: 650; }
-.gate-card input, .gate-card select { width: 100%; margin: 6px 0; padding: 12px; border-radius: 12px; border: 1px solid #e4d3bc; background: #fff; color: #241c16; font-size: 16px; }
-.gate-card .btn.primary { width: 100%; margin-top: 12px; background: #c4552a; color: #fffdf8; border-radius: 12px; padding: 12px; }
-.gate-error { min-height: 1.2em; margin: 8px 0 0; color: #9d2c2c; font-size: 13px; }
-.gate-note, .gate-switch { color: #6d5848; text-align: left; font-size: 14px; line-height: 1.45; }
-.gate-switch { margin-top: 16px; }
-.gate-switch button, .gate-card .text-btn { color: #9a5b32; font-weight: 700; }
-.gate-accounts { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
-.gate-accounts button { padding: 6px 10px; border-radius: 999px; background: #f3ecdf; color: #241c16; }
-#app.gate-mode .sidenav, #app.gate-mode #rail, #app.gate-mode #topbar, #app.gate-mode #msgpill { display: none !important; }
-#app.gate-mode #stage, #app.gate-mode .workspace, #app.gate-mode .columns { width: 100% !important; max-width: none; background: #f3ecdf; }
+.gate {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 32px 16px 48px;
+  background: #fafafa;
+  color: #000;
+}
+.gate-col { width: min(350px, 100%); }
+.gate-card {
+  background: #fff;
+  border: 1px solid #dbdbdb;
+  padding: 8px 40px 22px;
+  margin: 0 0 10px;
+}
+.gate-logo {
+  margin: 28px 0 22px;
+  text-align: center;
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 3.4rem;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+.gate-lead, .gate-note, .gate-fine { color: #737373; text-align: center; font-size: 14px; line-height: 1.4; }
+.gate-lead { margin: 0 0 16px; font-weight: 650; }
+.gate-note { margin: 14px 0 0; font-size: 12px; }
+.gate-fine { margin: 18px 0 0; font-size: 12px; }
+.gate-card form { display: flex; flex-direction: column; gap: 6px; }
+.gate-card input, .gate-card select {
+  width: 100%;
+  margin: 0;
+  padding: 10px 8px;
+  border-radius: 3px;
+  border: 1px solid #dbdbdb;
+  background: #fafafa;
+  color: #000;
+  font-size: 14px;
+}
+.gate-card input:focus, .gate-card select:focus { outline: none; border-color: #a8a8a8; }
+.gate-card .btn.primary {
+  width: 100%;
+  margin-top: 8px;
+  background: #0095f6;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.gate-card .btn.primary:disabled { background: #b2dffc; }
+.gate-error { min-height: 1.1em; margin: 4px 0 0; color: #ed4956; font-size: 12px; text-align: center; }
+.gate-or { display: flex; align-items: center; gap: 18px; margin: 16px 0 12px; color: #737373; font-size: 13px; font-weight: 650; text-transform: uppercase; }
+.gate-or::before, .gate-or::after { content: ""; height: 1px; flex: 1; background: #dbdbdb; }
+.gate-card .text-btn { display: block; width: 100%; color: #00376b; font-size: 12px; font-weight: 650; }
+.gate-alt { padding: 20px 16px; text-align: center; }
+.gate-alt p { margin: 0; font-size: 14px; }
+.gate-alt button { color: #0095f6; font-weight: 650; }
+.gate-accounts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+.gate-accounts button { color: #0095f6; font-size: 13px; font-weight: 650; }
+.gate-stage { display: none; }
+.gate-device {
+  width: 380px;
+  height: 580px;
+  border: 12px solid #111;
+  border-radius: 36px;
+  background: #111;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.gate-screen { height: 100%; background: #fff; overflow: hidden; }
+.gate-mini-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 8px; }
+.gate-mini-top b { font-family: Georgia, "Iowan Old Style", serif; font-style: italic; font-size: 22px; }
+.gate-mini-top span, .gate-mini-stories i { display: block; }
+.gate-mini-top span { width: 18px; height: 18px; border: 2px solid #111; border-radius: 5px; }
+.gate-mini-stories { display: flex; gap: 8px; padding: 4px 10px 10px; }
+.gate-mini-stories i { width: 48px; height: 48px; border-radius: 50%; background: conic-gradient(from -20deg, #f9ce34, #ee2a7b, #6228d7, #f9ce34); position: relative; }
+.gate-mini-stories i::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: #fff; }
+.gate-screen img { width: 100%; height: 230px; object-fit: cover; display: block; }
+#app.gate-mode,
+#app.gate-mode .workspace,
+#app.gate-mode .columns,
+#app.gate-mode #stage {
+  width: 100% !important;
+  max-width: none !important;
+  left: 0 !important;
+  transform: none !important;
+  background: #fafafa !important;
+}
+#app.gate-mode { flex-direction: column !important; }
+#app.gate-mode .sidenav, #app.gate-mode #rail, #app.gate-mode #topbar, #app.gate-mode #tabbar, #app.gate-mode #msgpill { display: none !important; }
+body:has(#app.gate-mode) { background: #fafafa; }
+@media (min-width: 900px) {
+  .gate-stage { display: block; }
+}
 
 .reels { height: 100%; overflow-y: auto; scroll-snap-type: y mandatory; background: #000; }
 .reel {
