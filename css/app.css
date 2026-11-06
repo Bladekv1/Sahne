@@ -5,8 +5,9 @@
   --muted: #737373;
   --line: #dbdbdb;
   --field: #efefef;
-  --heart: #ff3040;
-  --link: #083d75;
+  --heart: #ed4956;
+  --link: #00376b;
+  --blue: #0095f6;
   --sheet: #fff;
   --bubble: #efefef;
   --mine: #111;
@@ -209,7 +210,7 @@ body { touch-action: manipulation; }
   margin: 0 auto;
   padding: 2px;
   border-radius: 50%;
-  background: conic-gradient(from 210deg, #242424 0 12%, #ff4d2e 32%, #ffb703 58%, #2a9d8f 82%, #242424 100%);
+  background: conic-gradient(from -20deg, #f9ce34, #ee2a7b, #6228d7, #f9ce34);
   display: flex;
 }
 .ring.seen { background: var(--seen); }
@@ -340,8 +341,11 @@ body { touch-action: manipulation; }
   font-size: 14px;
   text-align: center;
 }
-.follow-btn, .btn.primary { background: var(--text); color: var(--bg); }
+.follow-btn, .btn.primary { background: var(--blue); color: #fff; }
 .follow-btn.following, .btn.primary.following { background: var(--field); color: var(--text); }
+.btn.tiny { width: auto; padding: 6px 10px; font-size: 13px; }
+.note.request { gap: 8px; }
+.lock-note { padding: 36px 28px; }
 .scard .follow-btn, .person .follow-btn { margin-top: 8px; width: 100%; }
 
 .chips { padding: 10px 12px; }
@@ -354,7 +358,7 @@ body { touch-action: manipulation; }
 }
 .chips button.on, .seg button.on { background: var(--text); color: var(--bg); }
 
-.explore-grid, .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+.explore-grid, .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; }
 .explore-grid a, .grid a {
   position: relative;
   aspect-ratio: 1;
@@ -866,8 +870,7 @@ html[data-theme="dark"] .more-menu { background: #262626; }
   #stage, #topbar, #composer:not(:empty) { width: min(630px, 100%); }
   #topbar, #composer:not(:empty) { margin: 0 auto; }
   #app.home #topbar { display: none; }
-  #app.home #stage { width: min(630px, 100%); padding-top: 8px; }
-  #app.home .frame { aspect-ratio: 4 / 3; }
+  #app.home #stage { width: min(470px, 100%); padding-top: 8px; }
   #app.wide #stage, #app.wide #topbar, #app.wide #composer:not(:empty) { width: min(935px, calc(100% - 48px)); }
   #app.desk-page #topbar { display: none; }
   #app.desk-page #stage { padding-top: 24px; }
@@ -1024,7 +1027,7 @@ html[data-theme="dark"] .more-menu { background: #262626; }
     color: #0095f6;
     font-size: 12px;
   }
-  .rail-person .follow-btn.following { color: var(--text); }
+  .rail-person .follow-btn.following { color: var(--text); background: none; }
   .rail-foot { margin: 28px 0 0; color: #737373; font-size: 11px; line-height: 1.7; }
 }
 

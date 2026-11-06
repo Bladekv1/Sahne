@@ -15,6 +15,8 @@ function blank() {
     likes: {},
     saves: {},
     follows: {},
+    requested: {},
+    incoming: [],
     comments: {},
     messages: {},
     read: {},
@@ -277,6 +279,9 @@ function applyWorld(data) {
   for (const id of data.hidden || []) state.hidden[id] = true;
   state.follows = {};
   for (const id of data.following || []) state.follows[id] = true;
+  state.requested = {};
+  for (const id of data.requestsOut || []) state.requested[id] = true;
+  state.incoming = data.requestsIn || [];
   state.seen = data.seen || {};
   state.read = data.reads || {};
   const mine = (data.profiles || []).find((person) => person.id === me());
@@ -312,6 +317,9 @@ export async function syncWorld() {
 
 async function uploadBlob(blob) {
   if (!blob) return { error: "Bir fotoğraf veya video seç." };
+  const video = String(blob.type || "").startsWith("video/");
+  const max = video ? 8 * 1024 * 1024 : 4 * 1024 * 1024;
+  if (blob.size > max) return { error: video ? "Video en fazla 8 MB olabilir." : "Fotoğraf en fazla 4 MB olabilir." };
   let response;
   try {
     response = await fetch("/api/media", {
@@ -412,10 +420,25 @@ export function isFollowing(id) {
   return !!state.follows[id];
 }
 
-export function toggleFollow(id) {
-  if (!id || id === me()) return false;
-  const on = !isFollowing(id);
-  state.follows[id] = on;
+export function followStatus(id) {
+  if (!id || id === me()) return "self";
+  if (state.follows[id]) return "following";
+  if (state.requested?.[id]) return "requested";
+  return "none";
+}
+
+export function followLabel(id) {
+  const status = followStatus(id);
+  if (status === "following") return "Takiptesin";
+  if (status === "requested") return "İstek gönderildi";
+  return "Takip et";
+}
+
+export function incomingRequests() {
+  return state.incoming || [];
+}
+
+function shiftFollowCounts(id, on) {
   const user = getUser(id);
   const self = getUser(me());
   if (user) {
@@ -426,10 +449,67 @@ export function toggleFollow(id) {
     self.following = Math.max(0, (self.following || 0) + (on ? 1 : -1));
     self.followingIds = on ? [...new Set([...(self.followingIds || []), id])] : (self.followingIds || []).filter((item) => item !== id);
   }
-  track(() => postJson("/api/follow", { id, on })).then((data) => {
-    if (data?.error) notify(data.error);
+}
+
+export function toggleFollow(id) {
+  if (!id || id === me()) return false;
+  const status = followStatus(id);
+  if (status === "following") {
+    state.follows[id] = false;
+    shiftFollowCounts(id, false);
+    track(() => postJson("/api/follow", { id, on: false })).then((data) => {
+      if (data?.error) notify(data.error);
+    });
+    return true;
+  }
+  if (status === "requested") {
+    delete state.requested[id];
+    track(() => postJson("/api/follow", { id, on: false })).then((data) => {
+      if (data?.error) notify(data.error);
+    });
+    return true;
+  }
+  const user = getUser(id);
+  if (user?.closed) {
+    state.requested[id] = true;
+  } else {
+    state.follows[id] = true;
+    shiftFollowCounts(id, true);
+  }
+  track(() => postJson("/api/follow", { id, on: true })).then((data) => {
+    if (data?.error) {
+      delete state.follows[id];
+      delete state.requested[id];
+      notify(data.error);
+      return;
+    }
+    if (data?.pending) {
+      if (state.follows[id]) shiftFollowCounts(id, false);
+      delete state.follows[id];
+      state.requested[id] = true;
+    }
+    if (data?.following) {
+      const was = !!state.follows[id];
+      delete state.requested[id];
+      state.follows[id] = true;
+      if (!was) shiftFollowCounts(id, true);
+    }
   });
   return true;
+}
+
+export function answerFollow(id, accept) {
+  if (!id) return;
+  state.incoming = (state.incoming || []).filter((item) => item.id !== id);
+  const self = getUser(me());
+  if (accept && self) {
+    self.followers = (self.followers || 0) + 1;
+    self.followerIds = [...new Set([...(self.followerIds || []), id])];
+  }
+  track(() => postJson(accept ? "/api/follow/accept" : "/api/follow/reject", { id })).then((data) => {
+    if (data?.error) notify(data.error);
+    lastWorld = "";
+  });
 }
 
 export function displayName(user) {
@@ -765,6 +845,7 @@ export function activityItems() {
 }
 
 export function activityPending() {
+  if ((state.incoming || []).length) return true;
   const newest = world.activity[0]?.at || 0;
   return newest > (state.activitySeenAt || 0);
 }

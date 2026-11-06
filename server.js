@@ -12,8 +12,15 @@ const pbkdf2Async = promisify(pbkdf2);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const reserved = new Set(seedUsers.map((user) => user.id));
 const categories = new Set(["Kişi", "Yaratıcı", "İşletme"]);
-const attempts = new Map();
-let globalWindow = { count: 0, until: 0 };
+const buckets = new Map();
+const NEW_ROUNDS = 150000;
+const LOGIN_FAIL = "Kullanıcı adı veya şifre hatalı.";
+const SHIELD = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+  "referrer-policy": "same-origin",
+};
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -32,7 +39,7 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
-    "x-content-type-options": "nosniff",
+    ...SHIELD,
     ...headers,
   });
   res.end(JSON.stringify(body));
@@ -48,23 +55,20 @@ function sameOrigin(req) {
   }
 }
 
-function clientKey(req) {
-  return req.socket.remoteAddress || "local";
-}
-
-function limited(req) {
+function hitBucket(key, limit, windowMs) {
   const now = Date.now();
-  if (globalWindow.until < now) globalWindow = { count: 0, until: now + 10 * 60 * 1000 };
-  globalWindow.count += 1;
-  if (globalWindow.count > 80) return true;
-  const key = clientKey(req);
-  const slot = attempts.get(key);
+  if (buckets.size > 4000) {
+    for (const [name, slot] of buckets) {
+      if (slot.until < now) buckets.delete(name);
+    }
+  }
+  const slot = buckets.get(key);
   if (!slot || slot.until < now) {
-    attempts.set(key, { count: 1, until: now + 10 * 60 * 1000 });
+    buckets.set(key, { count: 1, until: now + windowMs });
     return false;
   }
   slot.count += 1;
-  return slot.count > 8;
+  return slot.count > limit;
 }
 
 async function readJson(req) {
@@ -119,8 +123,9 @@ function hex(bytes) {
   return Buffer.from(bytes).toString("hex");
 }
 
-async function hashPassword(password, salt) {
-  const bits = await pbkdf2Async(password, salt, 100000, 32, "sha256");
+async function hashPassword(password, salt, iterations = 100000) {
+  const rounds = Number(iterations) || 100000;
+  const bits = await pbkdf2Async(password, salt, rounds, 32, "sha256");
   return bits.toString("hex");
 }
 
@@ -207,54 +212,77 @@ async function openSession(res, req, account, created) {
 
 async function findAccount(ident) {
   const key = cleanId(ident);
-  const rows = await sql("select * from accounts where id = $1 or (contact <> '' and contact = $1) limit 1", [key]);
+  if (!/^[a-z0-9._]{1,80}$/.test(key)) return null;
+  const rows = await sql("select * from accounts where id = $1 limit 1", [key]);
   return rows[0] || null;
 }
 
 async function createAccount({ id, name, contact, born, password, verified, role }) {
   const salt = randomBytes(16);
-  const hash = await hashPassword(password, salt);
+  const hash = await hashPassword(password, salt, NEW_ROUNDS);
   const rows = await sql(
-    `insert into accounts (id, name, contact, born, salt, hash, verified, role)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+    `insert into accounts (id, name, contact, born, salt, hash, verified, role, iterations)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      on conflict (id) do nothing
      returning id, name, verified, role`,
-    [id, name, contact, born, hex(salt), hash, verified, role],
+    [id, name, contact, born, hex(salt), hash, verified, role, NEW_ROUNDS],
   );
   return rows[0] || null;
 }
 
 async function login(req, res) {
-  if (limited(req)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const body = await readJson(req);
   const ident = cleanId(body.id);
   const password = String(body.password || "");
+  if (hitBucket(`login:${ident || "blank"}`, 8, 10 * 60 * 1000)) {
+    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  }
+  if (password.length < 8 || password.length > 200) return send(res, 401, { error: LOGIN_FAIL });
   const account = await findAccount(ident);
-  if (!account && ident === ownerId) return send(res, 401, { error: "Yönetici hesabı henüz hazır değil." });
-  if (!account) return send(res, 401, { error: "Bu hesap yok. Kaydol." });
-  if (account.role === "seed") return send(res, 401, { error: "Bu hesap girişe kapalı." });
-  if (password.length < 8) return send(res, 401, { error: "Şifre yanlış." });
-  const actual = await hashPassword(password, Buffer.from(String(account.salt), "hex"));
-  if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: "Şifre yanlış." });
+  const rounds = account ? Number(account.iterations) || 100000 : 100000;
+  let salt = Buffer.alloc(16, 3);
+  if (account) {
+    try {
+      salt = Buffer.from(String(account.salt), "hex");
+    } catch {
+      salt = Buffer.alloc(16, 3);
+    }
+  }
+  let actual = "";
+  try {
+    actual = await hashPassword(password, salt, rounds);
+  } catch {
+    actual = "";
+  }
+  const ok = account && account.role !== "seed" && passwordMatches(actual, account.hash);
+  if (!ok) return send(res, 401, { error: LOGIN_FAIL });
   return openSession(res, req, account, false);
 }
 
 async function register(req, res) {
-  if (limited(req)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const body = await readJson(req);
   const id = String(body.username || "").trim().toLowerCase();
   const name = String(body.name || "").trim().slice(0, 40);
   const contact = cleanId(body.contact);
   const born = String(body.born || "");
   const password = String(body.password || "");
-  if (!/^[a-z0-9._]{3,30}$/.test(id)) return send(res, 400, { error: "Kullanıcı adı 3–30 karakter olmalı. Harf, rakam, nokta veya alt çizgi." });
+  if (hitBucket(`register:${id || "blank"}`, 5, 10 * 60 * 1000)) {
+    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  }
+  if (!/^[a-z0-9._]{3,30}$/.test(id) || !/[a-z]/.test(id)) {
+    return send(res, 400, { error: "Kullanıcı adı 3–30 karakter olmalı ve en az bir harf içermeli." });
+  }
   if (reserved.has(id)) return send(res, 400, { error: "Bu kullanıcı adı kullanılıyor." });
   if (!name) return send(res, 400, { error: "Adını yaz." });
   if (!validContact(contact)) return send(res, 400, { error: "E-posta ya da telefon yaz." });
-  if (password.length < 8) return send(res, 400, { error: "Şifre en az 8 karakter olmalı." });
+  if (password.length < 8 || password.length > 200) return send(res, 400, { error: "Şifre en az 8 karakter olmalı." });
   if (!validBorn(born)) return send(res, 400, { error: "Doğum günü 13 yaşından büyük olmalı." });
-  const existing = await sql("select id from accounts where id = $1 or (contact <> '' and contact = $2) limit 1", [id, contact]);
-  if (existing.length) return send(res, 409, { error: "Bu hesap zaten kayıtlı. Giriş yap." });
+  const recent = await sql(
+    "select count(*)::int as n from accounts where role = 'user' and created_at > now() - interval '10 minutes'",
+  );
+  if (Number(recent[0]?.n || 0) >= 20) return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
+  const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
+  if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
   const account = await createAccount({
     id,
     name,
@@ -264,26 +292,31 @@ async function register(req, res) {
     verified: false,
     role: "user",
   });
-  if (!account) return send(res, 409, { error: "Bu hesap zaten kayıtlı. Giriş yap." });
+  if (!account) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
   await ensureProfile(account.id);
   return openSession(res, req, account, true);
 }
 
 async function changePassword(req, res) {
-  if (limited(req)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
   const sessionAccount = await currentAccount(req);
   if (!sessionAccount) return send(res, 401, { error: "Önce giriş yap." });
+  if (hitBucket(`password:${sessionAccount.id}`, 6, 10 * 60 * 1000)) {
+    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  }
   const account = await findAccount(sessionAccount.id);
   if (!account) return send(res, 401, { error: "Önce giriş yap." });
   const body = await readJson(req);
   const current = String(body.current || "");
   const next = String(body.next || "");
-  if (next.length < 8) return send(res, 400, { error: "Yeni şifre en az 8 karakter olmalı." });
-  const actual = await hashPassword(current, Buffer.from(String(account.salt), "hex"));
+  if (next.length < 8 || next.length > 200) return send(res, 400, { error: "Yeni şifre en az 8 karakter olmalı." });
+  const rounds = Number(account.iterations) || 100000;
+  const actual = await hashPassword(current, Buffer.from(String(account.salt), "hex"), rounds);
   if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: "Şimdiki şifre yanlış." });
   const salt = randomBytes(16);
-  const hash = await hashPassword(next, salt);
-  await sql("update accounts set salt = $1, hash = $2 where id = $3", [hex(salt), hash, account.id]);
+  const hash = await hashPassword(next, salt, NEW_ROUNDS);
+  await sql("update accounts set salt = $1, hash = $2, iterations = $3 where id = $4", [hex(salt), hash, NEW_ROUNDS, account.id]);
+  const token = cookieToken(req);
+  await sql("delete from sessions where account_id = $1 and token_hash <> $2", [account.id, tokenHash(token)]);
   send(res, 200, { ok: true });
 }
 
@@ -305,17 +338,18 @@ async function ensureOwner() {
   }
   let same = false;
   try {
-    const actual = await hashPassword(password, Buffer.from(String(existing.salt), "hex"));
+    const rounds = Number(existing.iterations) || 100000;
+    const actual = await hashPassword(password, Buffer.from(String(existing.salt), "hex"), rounds);
     same = passwordMatches(actual, existing.hash);
   } catch {
     same = false;
   }
   if (same && existing.role === "admin" && flag(existing.verified)) return;
   const salt = randomBytes(16);
-  const hash = await hashPassword(password, salt);
+  const hash = await hashPassword(password, salt, NEW_ROUNDS);
   await sql(
-    "update accounts set salt = $1, hash = $2, verified = true, role = 'admin' where id = $3",
-    [hex(salt), hash, ownerId],
+    "update accounts set salt = $1, hash = $2, verified = true, role = 'admin', iterations = $3 where id = $4",
+    [hex(salt), hash, NEW_ROUNDS, ownerId],
   );
   await sql("delete from sessions where account_id = $1", [ownerId]);
 }
@@ -458,7 +492,7 @@ function serveStatic(req, res, pathname) {
     return;
   }
   const type = types[path.extname(file).toLowerCase()] || "application/octet-stream";
-  res.writeHead(200, { "content-type": type, "x-content-type-options": "nosniff" });
+  res.writeHead(200, { "content-type": type, ...SHIELD });
   if (req.method === "HEAD") {
     res.end();
     return;

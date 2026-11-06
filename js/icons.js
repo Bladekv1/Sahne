@@ -12,6 +12,7 @@ const paths = {
   bookmark: '<path d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-3.4L6 21V4.5a1 1 0 0 1 1-1Z"/>',
   bookmarkFill: '<path fill="currentColor" stroke="none" d="M7 3.5h10a1 1 0 0 1 1 1V21l-6-3.4L6 21V4.5a1 1 0 0 1 1-1Z"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  plusBox: '<rect x="3.2" y="3.2" width="17.6" height="17.6" rx="5"/><path d="M12 8v8M8 12h8"/>',
   more: '<circle cx="6" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="18" cy="12" r="1" fill="currentColor"/>',
   back: '<path d="M15 5 8 12l7 7"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',

@@ -6,6 +6,19 @@ const MEDIA_ID = /^[a-f0-9]{32}$/;
 const USER_ID = /^[a-z0-9._]{1,64}$/;
 const MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm", "video/quicktime"]);
 const writes = new Map();
+const paces = new Map();
+const worldCache = new Map();
+const MAX_IMAGE = 4 * 1024 * 1024;
+const MAX_VIDEO = 8 * 1024 * 1024;
+const ACCOUNT_QUOTA = 40 * 1024 * 1024;
+const ACCOUNT_FILES = 25;
+const GLOBAL_CAP = 400 * 1024 * 1024;
+const SHIELD = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+  "referrer-policy": "same-origin",
+};
 
 function flag(value) {
   return value === true || value === 1 || value === "t" || value === "true";
@@ -52,7 +65,42 @@ function busy(accountId) {
     return false;
   }
   slot.count += 1;
-  return slot.count > 180;
+  return slot.count > 80;
+}
+
+function pace(key, limit, windowMs) {
+  const now = Date.now();
+  if (paces.size > 4000) {
+    for (const [name, slot] of paces) {
+      if (slot.until < now) paces.delete(name);
+    }
+  }
+  const slot = paces.get(key);
+  if (!slot || slot.until < now) {
+    paces.set(key, { count: 1, until: now + windowMs });
+    return false;
+  }
+  slot.count += 1;
+  return slot.count > limit;
+}
+
+function forgetWorld(accountId) {
+  if (accountId) worldCache.delete(accountId);
+}
+
+function rememberWorld(accountId, body) {
+  worldCache.set(accountId, { at: Date.now(), body });
+  if (worldCache.size > 400) {
+    const now = Date.now();
+    for (const [key, value] of worldCache) {
+      if (now - value.at > 8000) worldCache.delete(key);
+    }
+  }
+}
+
+function asCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 async function readJson(req) {
@@ -237,6 +285,7 @@ async function requireUser(currentAccount, req) {
   const account = await currentAccount(req);
   if (!account) fail(401, "Önce giriş yap.");
   if (busy(account.id)) fail(429, "Çok deneme oldu. Biraz bekle.");
+  forgetWorld(account.id);
   return account;
 }
 
@@ -322,22 +371,23 @@ async function loadWorld(account) {
   }
   const people = profiles.map((row) => {
     const stat = counts.get(row.id) || { followers: 0, following: 0 };
+    const open = row.id === viewer || !flag(row.closed) || myFollowing.has(row.id);
     return {
       id: row.id,
       name: row.name,
-      bio: row.bio || "",
-      note: row.note || "",
-      pronouns: row.pronouns || "",
-      category: row.category || "",
-      link: /^https:\/\/\S+$/.test(row.link) ? row.link : "",
-      avatar: publicSrc(row.avatar),
+      bio: open ? row.bio || "" : "",
+      note: open ? row.note || "" : "",
+      pronouns: open ? row.pronouns || "" : "",
+      category: open ? row.category || "" : "",
+      link: open && /^https:\/\/\S+$/.test(row.link) ? row.link : "",
+      avatar: open ? publicSrc(row.avatar) : "",
       closed: flag(row.closed),
       verified: flag(row.verified),
       sample: row.role === "seed",
       followers: stat.followers,
       following: stat.following,
-      followerIds: followers.get(row.id) || [],
-      followingIds: following.get(row.id) || [],
+      followerIds: open ? followers.get(row.id) || [] : [],
+      followingIds: open ? following.get(row.id) || [] : [],
       followed: myFollowing.has(row.id),
     };
   });
@@ -497,6 +547,18 @@ async function loadWorld(account) {
     ...commentActivity.map((row) => ({ id: `comment-${row.account_id}-${row.post_id}-${epoch(row.at)}`, user: row.account_id, type: "comment", postId: row.post_id, text: `yorum yaptı: ${clip(row.body, 80)}`, at: epoch(row.at) })),
     ...followActivity.map((row) => ({ id: `follow-${row.follower_id}`, user: row.follower_id, type: "follow", postId: "", text: "seni takip etmeye başladı", at: epoch(row.at) })),
   ].sort((a, b) => b.at - a.at).slice(0, 40);
+  const requestRows = await sql(
+    `select requester_id, target_id, (extract(epoch from created_at) * 1000) as at
+     from follow_requests
+     where requester_id = $1 or target_id = $1`,
+    [viewer],
+  );
+  const requestsOut = [];
+  const requestsIn = [];
+  for (const row of requestRows) {
+    if (row.requester_id === viewer) requestsOut.push(row.target_id);
+    else requestsIn.push({ id: row.requester_id, at: epoch(row.at) });
+  }
   return {
     profiles: people,
     posts,
@@ -512,6 +574,8 @@ async function loadWorld(account) {
     reads: Object.fromEntries(readRows.map((row) => [row.peer_id, epoch(row.at)])),
     storyReplies: replyRows.map((row) => ({ id: row.id, user: row.account_id, text: row.body, at: epoch(row.at) })),
     activity,
+    requestsOut,
+    requestsIn,
   };
 }
 
@@ -524,16 +588,35 @@ async function ownedMedia(accountId, mediaId) {
 async function sendWorld(req, res, send, currentAccount) {
   const account = await currentAccount(req);
   if (!account) return send(res, 401, { error: "Önce giriş yap." });
-  send(res, 200, await loadWorld(account));
+  if (pace(`world:${account.id}`, 20, 60 * 1000)) return send(res, 429, { error: "Çok sık yenileniyor. Biraz bekle." });
+  const cached = worldCache.get(account.id);
+  if (cached && Date.now() - cached.at < 4000) return send(res, 200, cached.body);
+  const body = await loadWorld(account);
+  rememberWorld(account.id, body);
+  send(res, 200, body);
+}
+
+async function mediaUsage(accountId) {
+  const rows = await sql(
+    "select count(*)::int as files, coalesce(sum(octet_length(bytes)), 0)::bigint as bytes from media where account_id = $1",
+    [accountId],
+  );
+  return { files: asCount(rows[0]?.files), bytes: asCount(rows[0]?.bytes) };
 }
 
 async function upload(req, res, send, currentAccount) {
   const account = await requireUser(currentAccount, req);
+  if (pace(`upload:${account.id}`, 8, 10 * 60 * 1000)) fail(429, "Çok fazla dosya. Biraz bekle.");
   const mime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   if (!MIMES.has(mime)) fail(400, "JPG, PNG, WEBP, GIF veya MP4 seç.");
-  const limit = mime.startsWith("video/") ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
+  const usage = await mediaUsage(account.id);
+  if (usage.files >= ACCOUNT_FILES || usage.bytes >= ACCOUNT_QUOTA) fail(413, "Hesabının depolama alanı doldu.");
+  const total = await sql("select coalesce(sum(octet_length(bytes)), 0)::bigint as bytes from media");
+  if (asCount(total[0]?.bytes) >= GLOBAL_CAP) fail(413, "Depolama doldu. Daha sonra yeniden dene.");
+  const limit = mime.startsWith("video/") ? MAX_VIDEO : MAX_IMAGE;
   const bytes = await readBody(req, limit);
   if (bytes.length < 32) fail(400, "Dosya boş görünüyor.");
+  if (usage.bytes + bytes.length > ACCOUNT_QUOTA) fail(413, "Hesabının depolama alanı doldu.");
   const id = hex(randomBytes(16));
   await sql("insert into media (id, account_id, mime, bytes) values ($1, $2, $3, $4)", [id, account.id, mime, bytes]);
   send(res, 200, { id });
@@ -541,34 +624,40 @@ async function upload(req, res, send, currentAccount) {
 
 async function sendMedia(req, res, id, currentAccount) {
   if (!MEDIA_ID.test(id)) {
-    res.writeHead(404);
+    res.writeHead(404, SHIELD);
     res.end();
     return;
   }
-  const rows = await sql("select account_id, mime, bytes from media where id = $1", [id]);
+  const rows = await sql("select account_id, mime from media where id = $1", [id]);
   const row = rows[0];
   if (!row || !MIMES.has(row.mime)) {
-    res.writeHead(404);
+    res.writeHead(404, SHIELD);
     res.end();
     return;
   }
   const viewer = await currentAccount(req);
-  const src = `/api/media/${id}`;
-  const avatar = await sql("select account_id from profiles where avatar = $1 limit 1", [src]);
-  let allowed = false;
-  if (avatar.length) allowed = true;
-  else if (viewer && viewer.id === row.account_id) allowed = true;
-  else allowed = await canSeeAccount(viewer?.id || "", row.account_id);
-  if (!allowed) {
-    res.writeHead(404);
+  if (!viewer) {
+    res.writeHead(401, SHIELD);
     res.end();
     return;
   }
-  const bytes = asBuffer(row.bytes);
+  if (pace(`media:${viewer.id}`, 90, 60 * 1000)) {
+    res.writeHead(429, SHIELD);
+    res.end();
+    return;
+  }
+  const allowed = viewer.id === row.account_id || await canSeeAccount(viewer.id, row.account_id);
+  if (!allowed) {
+    res.writeHead(404, SHIELD);
+    res.end();
+    return;
+  }
+  const stored = await sql("select bytes from media where id = $1", [id]);
+  const bytes = asBuffer(stored[0]?.bytes);
   const total = bytes.length;
   const headers = {
     "content-type": row.mime,
-    "x-content-type-options": "nosniff",
+    ...SHIELD,
     "accept-ranges": "bytes",
     "cache-control": "private, max-age=3600",
   };
@@ -686,8 +775,54 @@ async function setFollow(req, res, send, currentAccount) {
   const id = cleanUser(body.id);
   if (!id || id === account.id) fail(400, "Bu hesap takip edilemez.");
   if (!(await accountExists(id))) fail(404, "Bu hesap yok.");
-  if (body.on === false) await sql("delete from follows where follower_id = $1 and following_id = $2", [account.id, id]);
-  else await sql("insert into follows (follower_id, following_id) values ($1, $2) on conflict do nothing", [account.id, id]);
+  if (body.on === false) {
+    await sql("delete from follows where follower_id = $1 and following_id = $2", [account.id, id]);
+    await sql("delete from follow_requests where requester_id = $1 and target_id = $2", [account.id, id]);
+    forgetWorld(id);
+    return send(res, 200, { ok: true, following: false, pending: false });
+  }
+  const existing = await sql(
+    "select 1 from follows where follower_id = $1 and following_id = $2 limit 1",
+    [account.id, id],
+  );
+  if (existing.length) return send(res, 200, { ok: true, following: true, pending: false });
+  const profile = await sql("select closed from profiles where account_id = $1", [id]);
+  if (flag(profile[0]?.closed)) {
+    await sql(
+      "insert into follow_requests (requester_id, target_id) values ($1, $2) on conflict do nothing",
+      [account.id, id],
+    );
+    forgetWorld(id);
+    return send(res, 200, { ok: true, following: false, pending: true });
+  }
+  await sql("delete from follow_requests where requester_id = $1 and target_id = $2", [account.id, id]);
+  await sql("insert into follows (follower_id, following_id) values ($1, $2) on conflict do nothing", [account.id, id]);
+  forgetWorld(id);
+  send(res, 200, { ok: true, following: true, pending: false });
+}
+
+async function acceptFollow(req, res, send, currentAccount) {
+  const account = await requireUser(currentAccount, req);
+  const body = await readJson(req);
+  const id = cleanUser(body.id);
+  if (!id) fail(400, "Bu hesap yok.");
+  const rows = await sql(
+    "delete from follow_requests where requester_id = $1 and target_id = $2 returning requester_id",
+    [id, account.id],
+  );
+  if (!rows.length) fail(404, "İstek bulunamadı.");
+  await sql("insert into follows (follower_id, following_id) values ($1, $2) on conflict do nothing", [id, account.id]);
+  forgetWorld(id);
+  send(res, 200, { ok: true });
+}
+
+async function rejectFollow(req, res, send, currentAccount) {
+  const account = await requireUser(currentAccount, req);
+  const body = await readJson(req);
+  const id = cleanUser(body.id);
+  if (!id) fail(400, "Bu hesap yok.");
+  await sql("delete from follow_requests where requester_id = $1 and target_id = $2", [id, account.id]);
+  forgetWorld(id);
   send(res, 200, { ok: true });
 }
 
@@ -769,8 +904,9 @@ async function seeStory(req, res, send, currentAccount) {
   const account = await requireUser(currentAccount, req);
   const body = await readJson(req);
   const id = String(body.id || "");
-  const rows = await sql("select id from stories where id = $1", [id]);
+  const rows = await sql("select id, account_id from stories where id = $1", [id]);
   if (!rows.length) return send(res, 200, { ok: true });
+  if (!(await canSeeAccount(account.id, rows[0].account_id))) fail(404, "Hikaye bulunamadı.");
   await sql("insert into story_seen (account_id, story_id) values ($1, $2) on conflict do nothing", [account.id, id]);
   send(res, 200, { ok: true });
 }
@@ -783,6 +919,7 @@ async function replyStory(req, res, send, currentAccount) {
   if (!text) fail(400, "Yanıt yaz.");
   const rows = await sql("select id, account_id from stories where id = $1", [storyId]);
   if (!rows.length) fail(404, "Hikaye bulunamadı.");
+  if (!(await canSeeAccount(account.id, rows[0].account_id))) fail(404, "Hikaye bulunamadı.");
   if (rows[0].account_id === account.id) fail(400, "Kendi hikayene yanıt gönderilmez.");
   const id = hex(randomBytes(16));
   await sql("insert into story_replies (id, story_id, account_id, body) values ($1, $2, $3, $4)", [id, storyId, account.id, text]);
@@ -834,6 +971,8 @@ export async function handleSocial(req, res, pathname, ctx) {
               : req.method === "POST" && pathname === "/api/like" ? () => setLike(req, res, send, currentAccount)
                 : req.method === "POST" && pathname === "/api/save" ? () => setSave(req, res, send, currentAccount)
                   : req.method === "POST" && pathname === "/api/follow" ? () => setFollow(req, res, send, currentAccount)
+                    : req.method === "POST" && pathname === "/api/follow/accept" ? () => acceptFollow(req, res, send, currentAccount)
+                      : req.method === "POST" && pathname === "/api/follow/reject" ? () => rejectFollow(req, res, send, currentAccount)
                     : req.method === "POST" && pathname === "/api/comments" ? () => addComment(req, res, send, currentAccount)
                       : req.method === "POST" && pathname === "/api/comments/delete" ? () => removeComment(req, res, send, currentAccount)
                         : req.method === "POST" && pathname === "/api/messages" ? () => sendMessage(req, res, send, currentAccount)

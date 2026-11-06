@@ -127,6 +127,17 @@ function profileHref(id) {
   return `#/u/${safe}`;
 }
 
+function followBtn(id, primary) {
+  const status = store.followStatus(id);
+  const pressed = status === "following" || status === "requested";
+  const klass = `${primary ? "btn primary " : ""}follow-btn${pressed ? " following" : ""}`;
+  return `<button type="button" class="${klass}" data-act="follow" data-follow="${id}" data-user="${id}" aria-pressed="${pressed}">${esc(store.followLabel(id))}</button>`;
+}
+
+function profileLocked(user) {
+  return !!(user && user.closed && user.id !== me() && !store.isFollowing(user.id));
+}
+
 function safeHash(href) {
   const value = String(href ?? "");
   return /^#\/[a-z0-9._/-]*$/i.test(value) && value.length <= 120 ? value : "#/";
@@ -178,19 +189,16 @@ function railHtml() {
   const people = store.suggestPeople();
   return `<div class="rail-me">${avatar(self, 44)}<a href="#/profil"><strong>${esc(self.id)}</strong><small>${esc(store.displayName(self))}</small></a><a class="rail-switch" href="#/profil">Profil</a></div>
     <div class="rail-head"><span>Senin için önerilenler</span><a href="#/kesfet">Tümünü gör</a></div>
-    ${people.map((user) => {
-      const on = store.isFollowing(user.id);
-      return `<div class="rail-person">${avatar(user, 32)}<a href="${profileHref(user.id)}"><strong>${userLabel(user.id)}</strong><small>Senin için öneriliyor</small></a><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip Et"}</button></div>`;
-    }).join("")}
+    ${people.map((user) => `<div class="rail-person">${avatar(user, 32)}<a href="${profileHref(user.id)}"><strong>${userLabel(user.id)}</strong><small>Senin için öneriliyor</small></a>${followBtn(user.id)}</div>`).join("")}
     <p class="rail-foot">Bladekv1 · gönderiler, beğeniler ve mesajlar herkese açık hesapta durur</p>`;
 }
 
 function tabBar(r) {
   const items = [
-    ["#/", "akis", "Akış", r.head === "akis" ? "homeFill" : "home"],
-    ["#/reels", "reels", "Reels", r.head === "reels" ? "reelsFill" : "reels"],
-    ["#/yeni", "yeni", "Oluştur", "plus"],
+    ["#/", "akis", "Ana sayfa", r.head === "akis" ? "homeFill" : "home"],
     ["#/kesfet", "kesfet", "Keşfet", "search"],
+    ["#/yeni", "yeni", "Oluştur", "plusBox"],
+    ["#/reels", "reels", "Reels", r.head === "reels" ? "reelsFill" : "reels"],
     ["#/profil", "profil", "Profil", ""],
   ];
   return items.map(([href, id, label, glyph]) => {
@@ -217,7 +225,7 @@ function paintTop(r) {
   if (r.head === "akis") {
     const dot = store.activityPending() ? `<i class="dot"></i>` : "";
     const mail = store.unreadTotal();
-    topbar.innerHTML = `<a class="logo" href="#/">Bladekv1</a><div class="top-actions"><a class="icon-btn" href="#/yeni" aria-label="Oluştur">${icon("plus")}</a><a class="icon-btn" href="#/bildirim" aria-label="Bildirimler">${icon("heart")}${dot}</a><a class="icon-btn" href="#/mesaj" aria-label="Mesajlar">${icon("send")}${mail ? `<i class="count">${mail}</i>` : ""}</a></div>`;
+    topbar.innerHTML = `<a class="logo" href="#/">Bladekv1</a><div class="top-actions"><a class="icon-btn" href="#/bildirim" aria-label="Bildirimler">${icon("heart")}${dot}</a><a class="icon-btn" href="#/mesaj" aria-label="Mesajlar">${icon("send")}${mail ? `<i class="count">${mail}</i>` : ""}</a></div>`;
     return;
   }
   if (r.head === "kesfet") {
@@ -365,8 +373,7 @@ function feedScreen() {
   const people = store.suggestPeople();
   const empty = posts.length ? "" : `<p class="empty">Henüz paylaşım yok. İlk fotoğrafı sen bırak.</p>`;
   return `<p class="desk-label">Akış</p>${storyStrip()}${empty}${cards.join("")}<section class="suggest"><h2>Senin için</h2><div class="scards">${people.map((user) => {
-    const on = store.isFollowing(user.id);
-    return `<article class="scard">${avatar(user, 56)}<b>${esc(user.id)}</b><span>${esc(user.name)}</span><button type="button" class="follow-btn${on ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${on}">${on ? "Takiptesin" : "Takip et"}</button></article>`;
+    return `<article class="scard">${avatar(user, 56)}<b>${esc(user.id)}</b><span>${esc(user.name)}</span>${followBtn(user.id)}</article>`;
   }).join("")}</div></section>`;
 }
 
@@ -420,7 +427,7 @@ function reelsScreen(selected) {
     if (!user) return "";
     const liked = store.liked(reel.id);
     const saved = store.saved(reel.id);
-    const follow = user.id === me() ? "" : `<button type="button" class="follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button>`;
+    const follow = user.id === me() ? "" : followBtn(user.id);
     return `<article class="reel" id="reel-${reel.id}" data-id="${reel.id}">
       ${reelMedia(reel)}
       <div class="reel-shade"></div>
@@ -487,7 +494,7 @@ function chatScreen(id) {
 }
 
 function personRow(user, mode) {
-  const follow = user.id === me() ? "" : `<button type="button" class="follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}" aria-pressed="${store.isFollowing(user.id)}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button>`;
+  const follow = user.id === me() ? "" : followBtn(user.id);
   const href = mode === "message" ? `#/mesaj/${user.id}` : profileHref(user.id);
   return `<div class="person">${avatar(user, 48, true)}<a class="copy" href="${href}"><strong>${userLabel(user.id)}</strong><small>${esc(user.name)}</small></a>${mode === "message" ? "" : follow}</div>`;
 }
@@ -505,14 +512,17 @@ function profileScreen(id, tab) {
     : avatar(user, 86);
   const actions = user.id === me()
     ? `<a class="btn" href="#/duzenle">Profili düzenle</a><button type="button" class="btn" data-act="qr-open">Profili paylaş</button>`
-    : `<button type="button" class="btn primary follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button><a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
+    : `${followBtn(user.id, true)}<a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
   const lights = store.highlightsFor(user.id).map((item) => `<a href="#/h/${item.id}/0"><span class="hl"><img src="${safeSrc(item.cover)}" alt=""></span>${esc(item.title)}</a>`).join("");
   const addLight = user.id === me() ? `<a href="#/yeni/hikaye"><span class="hl add">${icon("plus")}</span>Yeni</a>` : "";
-  const body = tab === "reels"
-    ? reelGrid(reels)
-    : tab === "etiket"
-      ? photoGrid(tagged)
-      : photoGrid(posts);
+  const lockedOut = profileLocked(user);
+  const body = lockedOut
+    ? `<p class="empty lock-note">Bu hesap gizli. Takip isteğin onaylanırsa gönderiler, hikayeler ve listeler açılır.</p>`
+    : tab === "reels"
+      ? reelGrid(reels)
+      : tab === "etiket"
+        ? photoGrid(tagged)
+        : photoGrid(posts);
   if (isDesktop()) return desktopProfile(user, photo, actions, addLight, lights, base, tab, body);
   const note = store.noteOf(user);
   const pronouns = store.pronounsOf(user);
@@ -524,14 +534,17 @@ function profileScreen(id, tab) {
     : "";
   const locked = user.id === me() && store.isPrivate()
     ? `<p class="hint">Gizli hesap</p>`
-    : user.closed && user.id !== me() && !store.isFollowing(user.id)
-      ? `<p class="hint">Bu hesap gizli. Takip edince gönderileri görürsün.</p>`
+    : lockedOut
+      ? `<p class="hint">Bu hesap gizli. Takip isteği gönder, onaylarsa gönderileri görürsün.</p>`
       : "";
-  return `<section class="profile-top"><div class="profile-ava">${note ? `<span class="note-bubble">${esc(note)}</span>` : ""}${photo}</div><div><div class="name-line"><strong>${esc(store.displayName(user))}${tick(user.id)}</strong>${pronouns ? `<span>${esc(pronouns)}</span>` : ""}</div><ul class="stats"><li><strong>${formatCount(posts.length)}</strong><span>gönderi</span></li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></a></li></ul></div></section>
+  const followerStat = lockedOut
+    ? `<li><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></li><li><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></li>`
+    : `<li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong><span>takipçi</span></a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong><span>takip</span></a></li>`;
+  return `<section class="profile-top"><div class="profile-ava">${note ? `<span class="note-bubble">${esc(note)}</span>` : ""}${photo}</div><div><div class="name-line"><strong>${esc(store.displayName(user))}${tick(user.id)}</strong>${pronouns ? `<span>${esc(pronouns)}</span>` : ""}</div><ul class="stats"><li><strong>${formatCount(posts.length)}</strong><span>gönderi</span></li>${followerStat}</ul></div></section>
     <div class="bio">${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${esc(store.bioOf(user))}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https?:\/\//, ""))}</a>` : ""}</div>
     ${panel}
     <div class="row-btns">${actions}</div>
-    <div class="highlights">${addLight}${lights}</div>
+    <div class="highlights">${lockedOut ? "" : `${addLight}${lights}`}</div>
     <nav class="ptabs">
       <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
       <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
@@ -546,20 +559,20 @@ function desktopProfile(user, photo, _actions, addLight, lights, base, tab, body
   const link = safeHttp(store.linkOf(user));
   const locked = user.id === me() && store.isPrivate()
     ? `<p class="hint">Gizli hesap</p>`
-    : user.closed && user.id !== me() && !store.isFollowing(user.id)
-      ? `<p class="hint">Bu hesap gizli. Takip edince gönderileri görürsün.</p>`
+    : profileLocked(user)
+      ? `<p class="hint">Bu hesap gizli. Takip isteği gönder, onaylarsa gönderileri görürsün.</p>`
       : "";
   const buttons = user.id === me()
     ? `<a class="btn" href="#/duzenle">Profili düzenle</a><a class="btn" href="#/arsiv">Arşivi gör</a>`
-    : `<button type="button" class="btn primary follow-btn${store.isFollowing(user.id) ? " following" : ""}" data-act="follow" data-follow="${user.id}" data-user="${user.id}">${store.isFollowing(user.id) ? "Takiptesin" : "Takip et"}</button><a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
+    : `${followBtn(user.id, true)}<a class="btn" href="#/mesaj/${user.id}">Mesaj</a>`;
   const bio = esc(store.bioOf(user)).replaceAll("\n", "<br>");
   return `<header class="desk-profile"><div class="desk-ava">${photo}</div><div>
       <h1>${userLabel(user.id)}</h1>
-      <ul class="desk-stats"><li><strong>${formatCount(store.postsBy(user.id).length)}</strong> gönderi</li><li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong> takipçi</a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong> takip</a></li></ul>
+      <ul class="desk-stats"><li><strong>${formatCount(store.postsBy(user.id).length)}</strong> gönderi</li>${profileLocked(user) ? `<li><strong>${formatCount(store.followerCount(user))}</strong> takipçi</li><li><strong>${formatCount(store.followingCount(user))}</strong> takip</li>` : `<li><a href="#/takipci/${user.id}"><strong>${formatCount(store.followerCount(user))}</strong> takipçi</a></li><li><a href="#/takip/${user.id}"><strong>${formatCount(store.followingCount(user))}</strong> takip</a></li>`}</ul>
       <div class="desk-bio"><strong>${esc(store.displayName(user))}</strong>${pronouns ? ` <span>${esc(pronouns)}</span>` : ""}${category ? `<b class="category">${esc(category)}</b>` : ""}${locked}<p>${bio}</p>${link ? `<a class="profile-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link.replace(/^https:\/\//, ""))}</a>` : ""}</div>
     </div></header>
     <div class="desk-actions">${buttons}</div>
-    <div class="highlights desk-highlights">${addLight}${lights}</div>
+    <div class="highlights desk-highlights">${profileLocked(user) ? "" : `${addLight}${lights}`}</div>
     <nav class="ptabs">
       <a href="${base}" class="${tab === "grid" ? "on" : ""}" aria-label="Gönderiler">${icon("grid")}</a>
       <a href="${base}/reels" class="${tab === "reels" ? "on" : ""}" aria-label="Reels">${icon("reels")}</a>
@@ -945,12 +958,18 @@ function screen(r) {
   if (r.head === "g") return postScreen(r.parts[1]);
   if (r.head === "bildirim") {
     store.seeActivity();
-    return store.activityItems().map((item) => {
+    const requests = store.incomingRequests().map((item) => {
+      const user = getUser(item.id);
+      if (!user) return "";
+      return `<div class="note request">${avatar(user, 44, true)}<span class="copy"><p><strong>${userLabel(user.id)}</strong> seni takip etmek istiyor</p></span><button type="button" class="btn primary tiny" data-act="follow-answer" data-user="${user.id}" data-accept="1">Onayla</button><button type="button" class="btn tiny" data-act="follow-answer" data-user="${user.id}" data-accept="0">Sil</button></div>`;
+    }).join("");
+    const notes = store.activityItems().map((item) => {
       const user = getUser(item.user);
       if (!user) return "";
       const href = item.postId ? `#/g/${item.postId}` : profileHref(user.id);
       return `<a class="note" href="${href}">${avatar(user, 44, true)}<span class="copy"><p><strong>${userLabel(user.id)}</strong> ${esc(item.text)}</p><time>${timeAgo(item.at)}</time></span></a>`;
     }).join("");
+    return `${requests}${notes}` || `<p class="empty">Bildirim yok.</p>`;
   }
   if (r.head === "yeni") {
     if (isDesktop() && (!r.parts[1] || r.parts[1] === "gonderi")) return feedScreen();
@@ -988,6 +1007,7 @@ function screen(r) {
   if (r.head === "takipci" || r.head === "takip") {
     const user = getUser(r.parts[1]);
     if (!user) return missing("Bu hesap yok.");
+    if (profileLocked(user)) return `<p class="empty">Bu hesap gizli.</p>`;
     const list = r.head === "takipci" ? store.followerList(user) : store.followingList(user);
     return list.length ? list.map((person) => personRow(person)).join("") : `<p class="empty">Liste boş.</p>`;
   }
@@ -1025,7 +1045,7 @@ function paintModal(r) {
 }
 
 function rootTab(r) {
-  return r.head === "akis" || r.head === "kesfet" || r.head === "reels" || r.head === "profil" || (r.head === "mesaj" && !r.parts[1]);
+  return r.head === "akis" || r.head === "kesfet" || r.head === "reels" || r.head === "profil" || (r.head === "yeni" && !r.parts[1]) || (r.head === "mesaj" && !r.parts[1]);
 }
 
 function authScreen() {
@@ -1362,11 +1382,12 @@ function burst(id) {
 }
 
 function paintFollow(id) {
-  const on = store.isFollowing(id);
+  const status = store.followStatus(id);
+  const pressed = status === "following" || status === "requested";
   document.querySelectorAll(`[data-follow="${CSS.escape(id)}"]`).forEach((button) => {
-    button.classList.toggle("following", on);
-    button.textContent = on ? "Takiptesin" : button.closest(".rail-person") ? "Takip Et" : "Takip et";
-    button.setAttribute("aria-pressed", String(on));
+    button.classList.toggle("following", pressed);
+    button.textContent = store.followLabel(id);
+    button.setAttribute("aria-pressed", String(pressed));
   });
 }
 
@@ -1568,6 +1589,9 @@ document.body.addEventListener("click", (event) => {
     closeSheet();
     if (["profil", "u", "takip", "takipci", "b"].includes(head)) render();
     else paintFollow(zone.dataset.user);
+  } else if (act === "follow-answer") {
+    store.answerFollow(zone.dataset.user, zone.dataset.accept === "1");
+    render();
   } else if (act === "share") {
     closeSheet();
     shareItem(zone.dataset.id, zone.dataset.kind || "");
@@ -1583,7 +1607,7 @@ document.body.addEventListener("click", (event) => {
     openSheet(`<div class="grab"></div>
       <button type="button" data-act="share" data-id="${post.id}">Paylaş</button>
       <button type="button" data-act="copy" data-id="${post.id}">Bağlantıyı kopyala</button>
-      ${own ? "" : `<button type="button" data-act="follow" data-user="${post.user}" data-follow="${post.user}">${store.isFollowing(post.user) ? "Takibi bırak" : "Takip et"}</button>`}
+      ${own ? "" : `<button type="button" data-act="follow" data-user="${post.user}" data-follow="${post.user}">${store.followStatus(post.user) === "following" ? "Takibi bırak" : store.followLabel(post.user)}</button>`}
       ${created ? `<button type="button" class="danger" data-act="delete-post" data-id="${post.id}">Sil</button>` : `<button type="button" class="danger" data-act="hide" data-id="${post.id}">Gizle</button>`}
       <button type="button" data-act="close-sheet">Vazgeç</button>`);
   } else if (act === "hide") {
