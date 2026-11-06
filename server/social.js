@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { highlights, posts as seedPosts, reels, seedLikes, stories, storyReplies, threads, users } from "../js/data.js";
 import { sql } from "./db.js";
 
 const MEDIA_ID = /^[a-f0-9]{32}$/;
@@ -10,9 +9,8 @@ const paces = new Map();
 const worldCache = new Map();
 const MAX_IMAGE = 4 * 1024 * 1024;
 const MAX_VIDEO = 8 * 1024 * 1024;
-const ACCOUNT_QUOTA = 40 * 1024 * 1024;
-const ACCOUNT_FILES = 25;
-const GLOBAL_CAP = 400 * 1024 * 1024;
+const ACCOUNT_QUOTA = 24 * 1024 * 1024;
+const ACCOUNT_FILES = 12;
 const SHIELD = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
@@ -146,139 +144,10 @@ async function accountExists(id) {
   return rows.length > 0;
 }
 
-export async function seedSocial() {
-  const salt = hex(randomBytes(16));
-  const hash = hex(randomBytes(32));
-  for (const user of users) {
-    await sql(
-      `insert into accounts (id, name, contact, born, salt, hash, verified, role)
-       values ($1, $2, '', '', $3, $4, false, 'seed')
-       on conflict (id) do nothing`,
-      [user.id, clip(user.name, 40) || user.id, salt, hash],
-    );
-    await sql(
-      `insert into profiles (account_id, bio, note, pronouns, category, link)
-       values ($1, $2, $3, $4, $5, '')
-       on conflict (account_id) do nothing`,
-      [user.id, clip(user.bio, 150), clip(user.note, 60), clip(user.pronouns, 20), clip(user.category, 40)],
-    );
-  }
-  for (const user of users) {
-    for (const follower of user.followerIds || []) {
-      if (!cleanUser(follower) || follower === user.id) continue;
-      if (!(await accountExists(follower))) continue;
-      await sql(
-        "insert into follows (follower_id, following_id) values ($1, $2) on conflict do nothing",
-        [follower, user.id],
-      );
-    }
-  }
-  const marker = await sql("select id from posts where id = 'p1' limit 1");
-  if (marker.length) return;
-  for (const post of seedPosts) {
-    if (!(await accountExists(post.user))) continue;
-    await sql(
-      `insert into posts (id, account_id, kind, caption, location, topic, alt, created_at)
-       values ($1, $2, 'post', $3, $4, $5, $6, to_timestamp($7 / 1000.0))
-       on conflict (id) do nothing`,
-      [post.id, post.user, clip(post.caption, 2200), clip(post.location, 80), clip(post.topic, 40), clip(post.alt, 200), post.at],
-    );
-    for (const [index, image] of (post.images || []).entries()) {
-      const src = publicSrc(image);
-      if (!src) continue;
-      await sql(
-        "insert into post_media (post_id, position, src) values ($1, $2, $3) on conflict do nothing",
-        [post.id, index, src],
-      );
-    }
-    for (const comment of post.comments || []) {
-      if (!(await accountExists(comment.user))) continue;
-      await sql(
-        `insert into comments (id, post_id, account_id, body, created_at)
-         values ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         on conflict (id) do nothing`,
-        [comment.id, post.id, comment.user, clip(comment.text, 500), comment.at],
-      );
-    }
-    for (const liker of post.likers || []) {
-      if (!(await accountExists(liker))) continue;
-      await sql(
-        "insert into likes (account_id, post_id, created_at) values ($1, $2, to_timestamp($3 / 1000.0)) on conflict do nothing",
-        [liker, post.id, post.at],
-      );
-    }
-  }
-  if (await accountExists("bladekv1")) {
-    for (const postId of seedLikes) {
-      await sql(
-        "insert into likes (account_id, post_id) values ('bladekv1', $1) on conflict do nothing",
-        [postId],
-      );
-    }
-  }
-  for (const reel of reels) {
-    if (!(await accountExists(reel.user))) continue;
-    await sql(
-      `insert into posts (id, account_id, kind, caption, topic, src, poster, created_at)
-       values ($1, $2, 'reel', $3, $4, $5, $6, to_timestamp($7 / 1000.0))
-       on conflict (id) do nothing`,
-      [reel.id, reel.user, clip(reel.caption, 2200), clip(reel.topic, 40), publicSrc(reel.src), publicSrc(reel.poster), reel.at],
-    );
-  }
-  for (const story of stories) {
-    if (!(await accountExists(story.user))) continue;
-    for (const frame of story.frames || []) {
-      const src = publicSrc(frame.image);
-      if (!src) continue;
-      const at = Math.max(frame.at || Date.now(), Date.now() - 20 * 3600000);
-      await sql(
-        `insert into stories (id, account_id, src, text, created_at)
-         values ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         on conflict (id) do nothing`,
-        [frame.id, story.user, src, clip(frame.text, 140), at],
-      );
-    }
-  }
-  const firstStory = stories.find((story) => story.user === "bladekv1")?.frames?.[0]?.id;
-  if (firstStory) {
-    for (const reply of storyReplies) {
-      if (!(await accountExists(reply.user))) continue;
-      await sql(
-        `insert into story_replies (id, story_id, account_id, body, created_at)
-         values ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         on conflict (id) do nothing`,
-        [reply.id, firstStory, reply.user, clip(reply.text, 500), reply.at],
-      );
-    }
-  }
-  for (const thread of threads) {
-    if (!(await accountExists(thread.user)) || !(await accountExists("bladekv1"))) continue;
-    for (const message of thread.messages || []) {
-      const sender = message.from === "bladekv1" ? "bladekv1" : thread.user;
-      const recipient = sender === "bladekv1" ? thread.user : "bladekv1";
-      if (!(await accountExists(sender)) || !(await accountExists(recipient))) continue;
-      await sql(
-        `insert into messages (id, sender_id, recipient_id, body, created_at)
-         values ($1, $2, $3, $4, to_timestamp($5 / 1000.0))
-         on conflict (id) do nothing`,
-        [message.id, sender, recipient, clip(message.text, 1000), message.at],
-      );
-    }
-  }
-  for (const item of highlights) {
-    if (!(await accountExists(item.owner))) continue;
-    const frames = (item.frames || []).map((frame) => ({
-      id: frame.id,
-      image: publicSrc(frame.image),
-      at: frame.at,
-    })).filter((frame) => frame.image);
-    await sql(
-      `insert into highlights (id, account_id, title, cover, frames)
-       values ($1, $2, $3, $4, $5)
-       on conflict (id) do nothing`,
-      [item.id, item.owner, clip(item.title, 40), publicSrc(item.cover), JSON.stringify(frames)],
-    );
-  }
+export async function clearSamples() {
+  await sql("delete from sessions where account_id in (select id from accounts where role = 'seed')");
+  await sql("delete from verification_requests where account_id in (select id from accounts where role = 'seed')");
+  await sql("delete from accounts where role = 'seed'");
 }
 
 async function requireUser(currentAccount, req) {
@@ -596,6 +465,19 @@ async function sendWorld(req, res, send, currentAccount) {
   send(res, 200, body);
 }
 
+async function releaseUnused(accountId) {
+  await sql(
+    `delete from media m
+     where m.account_id = $1
+       and m.created_at < now() - interval '15 minutes'
+       and not exists (select 1 from post_media pm where pm.src = '/api/media/' || m.id)
+       and not exists (select 1 from posts p where p.src = '/api/media/' || m.id or p.poster = '/api/media/' || m.id)
+       and not exists (select 1 from stories s where s.src = '/api/media/' || m.id)
+       and not exists (select 1 from profiles pr where pr.avatar = '/api/media/' || m.id)`,
+    [accountId],
+  );
+}
+
 async function mediaUsage(accountId) {
   const rows = await sql(
     "select count(*)::int as files, coalesce(sum(octet_length(bytes)), 0)::bigint as bytes from media where account_id = $1",
@@ -609,10 +491,9 @@ async function upload(req, res, send, currentAccount) {
   if (pace(`upload:${account.id}`, 8, 10 * 60 * 1000)) fail(429, "Çok fazla dosya. Biraz bekle.");
   const mime = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   if (!MIMES.has(mime)) fail(400, "JPG, PNG, WEBP, GIF veya MP4 seç.");
+  await releaseUnused(account.id);
   const usage = await mediaUsage(account.id);
   if (usage.files >= ACCOUNT_FILES || usage.bytes >= ACCOUNT_QUOTA) fail(413, "Hesabının depolama alanı doldu.");
-  const total = await sql("select coalesce(sum(octet_length(bytes)), 0)::bigint as bytes from media");
-  if (asCount(total[0]?.bytes) >= GLOBAL_CAP) fail(413, "Depolama doldu. Daha sonra yeniden dene.");
   const limit = mime.startsWith("video/") ? MAX_VIDEO : MAX_IMAGE;
   const bytes = await readBody(req, limit);
   if (bytes.length < 32) fail(400, "Dosya boş görünüyor.");

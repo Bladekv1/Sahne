@@ -135,13 +135,12 @@ export function setDirectory(list) {
 }
 
 export function getUser(id) {
-  return directory.find((user) => user.id === id) || users.find((user) => user.id === id) || localUsers.find((user) => user.id === id) || null;
+  return directory.find((user) => user.id === id) || localUsers.find((user) => user.id === id) || null;
 }
 
 export function everyone() {
   if (directory.length) return directory;
-  const ids = new Set(users.map((user) => user.id));
-  return [...users, ...localUsers.filter((user) => user.id && !ids.has(user.id))];
+  return localUsers;
 }
 
 export const posts = [

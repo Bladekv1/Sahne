@@ -4,13 +4,13 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { ME as ownerId, users as seedUsers } from "./js/data.js";
+import { ME as ownerId } from "./js/data.js";
 import { sql } from "./server/db.js";
-import { ensureProfile, handleSocial, seedSocial } from "./server/social.js";
+import { clearSamples, ensureProfile, handleSocial } from "./server/social.js";
 
 const pbkdf2Async = promisify(pbkdf2);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const reserved = new Set(seedUsers.map((user) => user.id));
+const reserved = new Set([ownerId]);
 const categories = new Set(["Kişi", "Yaratıcı", "İşletme"]);
 const buckets = new Map();
 const NEW_ROUNDS = 150000;
@@ -166,7 +166,7 @@ function publicPerson(row) {
 }
 
 async function people() {
-  const rows = await sql("select id, name, verified from accounts order by created_at asc");
+  const rows = await sql("select id, name, verified from accounts where role <> 'seed' order by created_at desc limit 40");
   return rows.map(publicPerson);
 }
 
@@ -207,7 +207,7 @@ async function openSession(res, req, account, created) {
     [tokenHash(token), account.id, expires],
   );
   const user = await accountView(account);
-  send(res, 200, { user, created: Boolean(created), people: await people() }, { "set-cookie": sessionCookie(token, req) });
+  send(res, 200, { user, created: Boolean(created) }, { "set-cookie": sessionCookie(token, req) });
 }
 
 async function findAccount(ident) {
@@ -234,28 +234,23 @@ async function login(req, res) {
   const body = await readJson(req);
   const ident = cleanId(body.id);
   const password = String(body.password || "");
-  if (hitBucket(`login:${ident || "blank"}`, 8, 10 * 60 * 1000)) {
-    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
-  }
   if (password.length < 8 || password.length > 200) return send(res, 401, { error: LOGIN_FAIL });
   const account = await findAccount(ident);
-  const rounds = account ? Number(account.iterations) || 100000 : 100000;
-  let salt = Buffer.alloc(16, 3);
-  if (account) {
-    try {
-      salt = Buffer.from(String(account.salt), "hex");
-    } catch {
-      salt = Buffer.alloc(16, 3);
-    }
+  if (!account || account.role === "seed") {
+    if (hitBucket("login-miss", 40, 60 * 1000)) return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+    return send(res, 401, { error: LOGIN_FAIL });
   }
+  if (hitBucket(`login:${account.id}`, 8, 10 * 60 * 1000)) {
+    return send(res, 429, { error: "Çok deneme oldu. Biraz bekle." });
+  }
+  const rounds = Number(account.iterations) || 100000;
   let actual = "";
   try {
-    actual = await hashPassword(password, salt, rounds);
+    actual = await hashPassword(password, Buffer.from(String(account.salt), "hex"), rounds);
   } catch {
     actual = "";
   }
-  const ok = account && account.role !== "seed" && passwordMatches(actual, account.hash);
-  if (!ok) return send(res, 401, { error: LOGIN_FAIL });
+  if (!passwordMatches(actual, account.hash)) return send(res, 401, { error: LOGIN_FAIL });
   return openSession(res, req, account, false);
 }
 
@@ -263,7 +258,6 @@ async function register(req, res) {
   const body = await readJson(req);
   const id = String(body.username || "").trim().toLowerCase();
   const name = String(body.name || "").trim().slice(0, 40);
-  const contact = cleanId(body.contact);
   const born = String(body.born || "");
   const password = String(body.password || "");
   if (hitBucket(`register:${id || "blank"}`, 5, 10 * 60 * 1000)) {
@@ -274,20 +268,15 @@ async function register(req, res) {
   }
   if (reserved.has(id)) return send(res, 400, { error: "Bu kullanıcı adı kullanılıyor." });
   if (!name) return send(res, 400, { error: "Adını yaz." });
-  if (!validContact(contact)) return send(res, 400, { error: "E-posta ya da telefon yaz." });
   if (password.length < 8 || password.length > 200) return send(res, 400, { error: "Şifre en az 8 karakter olmalı." });
-  if (!validBorn(born)) return send(res, 400, { error: "Doğum günü 13 yaşından büyük olmalı." });
-  const recent = await sql(
-    "select count(*)::int as n from accounts where role = 'user' and created_at > now() - interval '10 minutes'",
-  );
-  if (Number(recent[0]?.n || 0) >= 20) return send(res, 429, { error: "Şu an çok kayıt var. Biraz sonra yeniden dene." });
+  if (!validBorn(born)) return send(res, 400, { error: "Doğum yılı 13 yaşından büyük olmalı." });
   const existing = await sql("select id from accounts where id = $1 limit 1", [id]);
   if (existing.length) return send(res, 409, { error: "Bu kullanıcı adı kullanılıyor." });
   const account = await createAccount({
     id,
     name,
-    contact,
-    born,
+    contact: "",
+    born: "",
     password,
     verified: false,
     role: "user",
@@ -322,10 +311,10 @@ async function changePassword(req, res) {
 
 async function ensureOwner() {
   const password = String(process.env.BLADEKV1_OWNER_PASSWORD || "").trim();
-  if (password.length < 12) return;
+  if (password.length < 8) return;
   const existing = await findAccount(ownerId);
   if (!existing) {
-    await createAccount({
+    const account = await createAccount({
       id: ownerId,
       name: "Blade",
       contact: "",
@@ -334,6 +323,7 @@ async function ensureOwner() {
       verified: true,
       role: "admin",
     });
+    if (account) await ensureProfile(account.id);
     return;
   }
   let same = false;
@@ -344,7 +334,10 @@ async function ensureOwner() {
   } catch {
     same = false;
   }
-  if (same && existing.role === "admin" && flag(existing.verified)) return;
+  if (same && existing.role === "admin" && flag(existing.verified)) {
+    await ensureProfile(ownerId);
+    return;
+  }
   const salt = randomBytes(16);
   const hash = await hashPassword(password, salt, NEW_ROUNDS);
   await sql(
@@ -352,6 +345,7 @@ async function ensureOwner() {
     [hex(salt), hash, NEW_ROUNDS, ownerId],
   );
   await sql("delete from sessions where account_id = $1", [ownerId]);
+  await ensureProfile(ownerId);
 }
 
 async function applyVerify(req, res) {
@@ -431,10 +425,19 @@ async function adminRequests(req, res) {
 async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/health") return send(res, 200, { ok: true });
   if (req.method === "GET" && pathname === "/api/session") {
+    const token = cookieToken(req);
+    const key = token ? `session:${tokenHash(token).slice(0, 12)}` : "session:anon";
+    if (hitBucket(key, token ? 40 : 20, 60 * 1000)) return send(res, 429, { error: "Çok sık deneme oldu. Biraz bekle." });
     const account = await currentAccount(req);
-    return send(res, 200, { user: await accountView(account), people: await people() });
+    return send(res, 200, { user: await accountView(account) });
   }
-  if (req.method === "GET" && pathname === "/api/people") return send(res, 200, { people: await people() });
+  if (req.method === "GET" && pathname === "/api/people") {
+    const account = await currentAccount(req);
+    if (!account) return send(res, 401, { error: "Önce giriş yap." });
+    if (hitBucket(`people:${account.id}`, 12, 60 * 1000)) return send(res, 429, { error: "Çok sık deneme oldu. Biraz bekle." });
+    const rows = await sql("select id, name, verified from accounts where role <> 'seed' order by created_at desc limit 20");
+    return send(res, 200, { people: rows.map(publicPerson) });
+  }
   if (req.method === "GET" && await handleSocial(req, res, pathname, { send, currentAccount })) return;
   if (!sameOrigin(req)) return send(res, 403, { error: "İstek kabul edilmedi." });
   if (req.method === "POST" && await handleSocial(req, res, pathname, { send, currentAccount })) return;
@@ -504,8 +507,8 @@ let booted;
 function boot() {
   booted ??= (async () => {
     await sql("select 1 as ok");
+    await clearSamples();
     await ensureOwner();
-    await seedSocial();
   })();
   return booted;
 }

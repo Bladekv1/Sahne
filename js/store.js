@@ -198,6 +198,7 @@ export async function syncAccount() {
 
 export function isVerified(id) {
   if (serverUser?.id === id && serverUser.verified) return true;
+  if (getUser(id)?.verified) return true;
   return peopleCache.some((person) => person.id === id && person.verified);
 }
 
