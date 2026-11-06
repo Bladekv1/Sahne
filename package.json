@@ -1,0 +1,16 @@
+{
+  "name": "bladekv1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/migrate.mjs",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.14",
+    "pg": "^8.16.3"
+  }
+}

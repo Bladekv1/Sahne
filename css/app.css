@@ -121,7 +121,7 @@ body { touch-action: manipulation; }
   height: 40px;
   position: relative;
 }
-.handle { font-size: 16px; font-weight: 700; justify-self: center; }
+.handle { display: inline-flex; align-items: center; font-size: 16px; font-weight: 700; justify-self: center; }
 .searchbar { padding-right: 12px; }
 .search, .inbox-search {
   width: 100%;
@@ -392,7 +392,11 @@ body { touch-action: manipulation; }
 .desk-profile { display: grid; grid-template-columns: 180px 1fr; gap: 28px; align-items: center; padding: 8px 16px 4px; }
 .desk-ava { display: grid; place-items: center; }
 .desk-ava .ava, .desk-ava .ring { width: 150px; height: 150px; }
-.desk-profile h1 { margin: 0 0 18px; font-size: 20px; font-weight: 400; }
+.desk-profile h1 { display: flex; align-items: center; margin: 0 0 18px; font-size: 20px; font-weight: 400; }
+.tick { display: inline-flex; margin-left: 4px; vertical-align: middle; }
+.who strong, .author, .name-line strong, .copy strong { display: inline-flex; align-items: center; }
+.verify-card { display: grid; gap: 8px; margin: 12px 0; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.verify-card p { margin: 0; white-space: pre-wrap; }
 .desk-stats { display: flex; gap: 32px; list-style: none; margin: 0 0 16px; padding: 0; }
 .desk-stats strong { font-weight: 700; }
 .desk-bio strong { font-weight: 650; }
@@ -1093,7 +1097,7 @@ html[data-theme="dark"] .more-menu { background: #262626; }
 .thread > time { margin-left: auto; flex: none; text-transform: none; letter-spacing: 0; }
 .edit-ava { display: flex; align-items: center; gap: 16px; padding: 8px 0 12px; }
 .form-page label { display: block; margin: 14px 0; color: var(--muted); font-size: 13px; }
-.form-page label input, .form-page label textarea { display: block; width: 100%; margin-top: 4px; color: var(--text); }
+.form-page label input, .form-page label textarea, .form-page label select { display: block; width: 100%; margin-top: 4px; color: var(--text); background: var(--field); border: 0; border-radius: 8px; padding: 10px 12px; font: inherit; }
 .settings-sec { margin: 0; padding: 18px 16px 6px; color: var(--muted); font-size: 14px; font-weight: 700; }
 .set-row {
   display: flex;

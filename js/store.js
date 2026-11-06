@@ -66,6 +66,27 @@ function loadRoot() {
 
 let root = loadRoot();
 let state = blank();
+let peopleCache = [];
+let serverUser = null;
+
+function localRecord(account, online) {
+  return {
+    id: account.id,
+    name: account.name,
+    bio: "",
+    note: "",
+    pronouns: "",
+    category: "",
+    link: "",
+    followers: 0,
+    following: 0,
+    followed: false,
+    followerIds: [],
+    followingIds: [],
+    online,
+    local: true,
+  };
+}
 
 export function me() {
   return root.session || "";
@@ -82,22 +103,97 @@ function bind() {
     ? { ...blank(), ...bucket, profile: { ...blank().profile, ...(bucket.profile || {}) } }
     : blank();
   state.theme = root.theme || state.theme || "system";
-  setLocalUsers(root.accounts.map((account) => ({
-    id: account.id,
-    name: account.name,
-    bio: "",
-    note: "",
-    pronouns: "",
-    category: "",
-    link: "",
-    followers: 0,
-    following: 0,
-    followed: false,
-    followerIds: [],
-    followingIds: [],
-    online: account.id === id,
-    local: true,
-  })));
+  publishLocals();
+}
+
+function publishLocals() {
+  const seeded = new Set(users.map((user) => user.id));
+  const map = new Map();
+  for (const account of root.accounts) {
+    if (!seeded.has(account.id)) map.set(account.id, localRecord(account, account.id === root.session));
+  }
+  for (const person of peopleCache) {
+    if (!seeded.has(person.id)) map.set(person.id, localRecord(person, person.id === root.session));
+  }
+  setLocalUsers([...map.values()]);
+}
+
+function applyPeople(list) {
+  peopleCache = Array.isArray(list) ? list : [];
+  publishLocals();
+}
+
+function adopt(user) {
+  serverUser = user;
+  root.session = user.id;
+  if (user.verified) {
+    peopleCache = [...peopleCache.filter((person) => person.id !== user.id), { id: user.id, name: user.name, verified: true }];
+  }
+  if (!root.accounts.some((account) => account.id === user.id)) {
+    root.accounts.push({ id: user.id, name: user.name, contact: "", born: "", salt: "", hash: "", createdAt: Date.now() });
+  }
+  if (!root.buckets[user.id]) {
+    const fresh = blank();
+    fresh.profile = { ...fresh.profile, name: user.name || null };
+    root.buckets[user.id] = fresh;
+  }
+  bind();
+  save();
+}
+
+async function postJson(path, body) {
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+  } catch {
+    return { error: "Sunucuya ulaşılamadı." };
+  }
+  let data = {};
+  try { data = await response.json(); } catch { data = {}; }
+  if (!response.ok) return { error: data.error || "Olmadı." };
+  return data;
+}
+
+export async function syncAccount() {
+  try {
+    const response = await fetch("/api/session", { credentials: "same-origin" });
+    if (!response.ok) return;
+    const data = await response.json();
+    applyPeople(data.people);
+    if (data.user) adopt(data.user);
+    else if (root.session) {
+      root.session = "";
+      serverUser = null;
+      bind();
+      save();
+    }
+  } catch {
+    /* keep the device session when the server cannot be reached */
+  }
+}
+
+export function isVerified(id) {
+  if (serverUser?.id === id && serverUser.verified) return true;
+  return peopleCache.some((person) => person.id === id && person.verified);
+}
+
+export function isAdmin() {
+  return serverUser?.role === "admin";
+}
+
+export function verifyRequest() {
+  return serverUser?.request || "";
+}
+
+export function noteServerUser(user) {
+  if (!user) return;
+  serverUser = user;
+  if (Array.isArray(user.people)) applyPeople(user.people);
 }
 
 function save() {
@@ -529,67 +625,50 @@ export function loginEvents() {
 }
 
 export async function registerAccount({ name, username, contact, password, born }) {
-  const id = String(username || "").trim().toLowerCase();
-  const cleanName = String(name || "").trim().slice(0, 40);
-  const cleanContact = String(contact || "").trim().toLowerCase().replace(/[\s()-]/g, "").slice(0, 80);
-  const secret = String(password || "");
-  if (!/^[a-z0-9._]{3,30}$/.test(id)) return { error: "Kullanıcı adı 3–30 karakter olmalı. Harf, rakam, nokta veya alt çizgi." };
-  if (users.some((user) => user.id === id && user.id !== seedOwner)) return { error: "Bu kullanıcı adı kullanılıyor." };
-  if (!cleanName) return { error: "Adını yaz." };
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanContact) && !/^\+?[0-9]{10,15}$/.test(cleanContact)) return { error: "E-posta ya da telefon yaz." };
-  if (secret.length < 8) return { error: "Şifre en az 8 karakter olmalı." };
-  if (!validBorn(born)) return { error: "Doğum günü 13 yaşından büyük olmalı." };
-  if (root.accounts.some((account) => account.id === id || account.contact === cleanContact)) return { error: "Bu hesap zaten kayıtlı. Giriş yap." };
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await digestPassword(secret, salt);
-  root.accounts.push({ id, name: cleanName, contact: cleanContact, born, salt: hex(salt), hash, createdAt: Date.now() });
-  if (!root.buckets[id]) {
-    const fresh = blank();
-    fresh.profile = { ...fresh.profile, name: cleanName };
-    root.buckets[id] = fresh;
-  }
-  root.session = id;
-  rememberLogin(id, "kayıt");
-  bind();
-  return save() ? { ok: true } : { error: "Hesap bu telefona sığmadı." };
+  const data = await postJson("/api/register", { name, username, contact, password, born });
+  if (data.error || !data.user) return { error: data.error || "Hesap açılamadı." };
+  applyPeople(data.people);
+  adopt(data.user);
+  rememberLogin(data.user.id, "kayıt");
+  save();
+  return { ok: true, created: true };
 }
 
 export async function loginAccount(ident, password) {
-  const key = String(ident || "").trim().toLowerCase().replace(/[\s()-]/g, "");
-  const secret = String(password || "");
-  const account = root.accounts.find((item) => item.id === key || item.contact === key);
-  if (!account || secret.length < 8) return { error: "Kullanıcı adı veya şifre yanlış." };
-  const hash = await digestPassword(secret, bytesFromHex(account.salt));
-  if (hash !== account.hash) return { error: "Kullanıcı adı veya şifre yanlış." };
-  root.session = account.id;
-  rememberLogin(account.id, "giriş");
-  bind();
-  return save() ? { ok: true } : { error: "Giriş bu telefona sığmadı." };
+  const data = await postJson("/api/login", { id: ident, password });
+  if (data.error || !data.user) return { error: data.error || "Giriş tamamlanamadı." };
+  applyPeople(data.people);
+  adopt(data.user);
+  rememberLogin(data.user.id, data.created ? "kayıt" : "giriş");
+  save();
+  return { ok: true, created: Boolean(data.created) };
 }
 
 export async function resetPassword({ username, born, password }) {
-  const id = String(username || "").trim().toLowerCase();
-  const secret = String(password || "");
-  const account = root.accounts.find((item) => item.id === id);
-  if (!account || account.born !== born) return { error: "Bilgiler eşleşmedi." };
-  if (secret.length < 8) return { error: "Yeni şifre en az 8 karakter olmalı." };
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  account.salt = hex(salt);
-  account.hash = await digestPassword(secret, salt);
-  rememberLogin(id, "şifre");
-  return save() ? { ok: true } : { error: "Şifre sığmadı." };
+  const data = await postJson("/api/password", { username, born, password });
+  if (data.error) return data;
+  return { ok: true };
 }
 
-export function logout() {
+export async function logout() {
+  try {
+    await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  } catch { /* the device session still closes */ }
   if (root.session) rememberLogin(root.session, "çıkış");
   root.session = "";
+  serverUser = null;
   bind();
   save();
 }
 
-export function reset() {
+export async function reset() {
+  try {
+    await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  } catch { /* local data still clears */ }
   root = emptyRoot();
   state = blank();
+  serverUser = null;
+  peopleCache = [];
   bind();
   localStorage.removeItem(KEY);
 }
